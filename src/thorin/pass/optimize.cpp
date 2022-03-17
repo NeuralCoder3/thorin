@@ -88,16 +88,16 @@ void optimize(World& world) {
 // //    opt2.run();
     printf("Finished Prepare Opti\n");
 
-    PassMan optB(world);
+    PassMan optCCB(world);
     // opt.add<PartialEval>();
     // auto br = opt.add<BetaRed>();
-    auto erB = optB.add<EtaRed>();
-    auto eeB = optB.add<EtaExp>(erB);
+    auto erCCB = optCCB.add<EtaRed>();
+    auto eeCCB = optCCB.add<EtaExp>(erCCB);
     // opt.add<SSAConstr>(ee);
     // opt.add<Scalerize>(ee);
     // opt.add<CopyProp>(br, ee);
     // opt.add<TailRecElim>(er);
-    optB.run();
+    optCCB.run();
     printf("Finished Closur Prepare Opti\n");
 
     closure_conv(world);
