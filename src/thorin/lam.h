@@ -25,7 +25,8 @@ public:
     THORIN_PROJ(dom, const)
     THORIN_PROJ(codom, const)
     bool is_cn() const;
-    bool is_basicblock() const { return order() == 1; }
+    bool is_basicblock() const;
+    bool is_returning() const;
     const Pi* ret_pi(const Def* dbg = {}) const;
     ///@}
 
@@ -67,6 +68,7 @@ public:
     const Pi* type() const { return Def::type()->as<Pi>(); }
     const Def* dom() const { return type()->dom(); }
     const Def* codom() const { return type()->codom(); }
+    const Pi* ret_pi() const { return type()->ret_pi(); }
     THORIN_PROJ(dom, const)
     THORIN_PROJ(codom, const)
     ///@}
@@ -127,6 +129,7 @@ public:
     ///@}
 
     bool is_basicblock() const;
+    bool is_returning() const;
 
     static constexpr auto Node = Node::Lam;
     friend class World;

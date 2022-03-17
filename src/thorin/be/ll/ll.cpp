@@ -153,7 +153,8 @@ std::string CodeGen::convert(const Def* type) {
         if (auto arity = isa_lit(arr->shape())) size = *arity;
         s.fmt("[{} x {}]", size, elem_type);
     } else if (auto pi = type->isa<Pi>()) {
-        s.fmt("{} (", convert(pi->doms().back()->as<Pi>()->dom()));
+        assert(pi->is_returning() && "should never have to convert type of BB");
+        s.fmt("{} (", convert_ret_pi(pi->ret_pi()));
 
         std::string_view sep = "";
         auto doms = pi->doms();
@@ -162,6 +163,8 @@ std::string CodeGen::convert(const Def* type) {
             s << sep << convert(dom);
             sep = ", ";
         }
+
+        s << ")*";
     } else if (auto sigma = type->isa<Sigma>()) {
         if (sigma->isa_nom()) {
             name          = id(sigma);
@@ -209,6 +212,10 @@ void CodeGen::run() {
     emit_module();
 
     stream_ << "declare i8* @malloc(i64)" << '\n'; // HACK
+    // SJLJ intrinsics (GLIBC Versions)
+    stream_ << "declare i32 @_setjmp(i8*) returns_twice" << '\n';
+    stream_ << "declare void @longjmp(i8*, i32) noreturn" << '\n';
+    stream_ << "declare i64 @jmpbuf_size()" << '\n';
     stream_ << type_decls_.str() << '\n';
     stream_ << func_decls_.str() << '\n';
     stream_ << vars_decls_.str() << '\n';
@@ -303,11 +310,19 @@ void CodeGen::emit_epilogue(Lam* lam) {
                 for (size_t i = 0, e = types.size(); i != e; ++i) bb.tail("ret_val.e{} = {};\n", i, values[i]);
                 return bb.tail("ret ret_val");
         }
-    } else if (auto ex = app->callee()->isa<Extract>()) {
+    } else if (auto ex = app->callee()->isa<Extract>(); ex && app->callee_type()->is_basicblock()) {
         emit_unsafe(app->arg());
-        auto c      = emit(ex->index());
-        auto [f, t] = ex->tuple()->projs<2>([this](auto def) { return emit(def); });
-        return bb.tail("br i1 {}, label {}, label {}", c, t, f);
+        auto c = emit(ex->index());
+        if (ex->tuple()->num_projs() == 2) {
+            auto [f, t] = ex->tuple()->projs<2>([this](auto def) { return emit(def); });
+            return bb.tail("br i1 {}, label {}, label {}", c, t, f);
+        } else {
+            auto c_ty = convert(ex->index()->type());
+            bb.tail("switch {} {}, label {} [ ", c_ty, c, emit(ex->tuple()->proj(0)));
+            for (auto i = 1u; i < ex->tuple()->num_projs(); i++)
+                bb.tail().back().fmt("{} {}, label {} ", c_ty, std::to_string(i), emit(ex->tuple()->proj(i)));
+            bb.tail().back().fmt("]");
+        }
     } else if (app->callee()->isa<Bot>()) {
         return bb.tail("ret ; bottom: unreachable");
     } else if (auto callee = app->callee()->isa_nom<Lam>(); callee && callee->is_basicblock()) { // ordinary jump
@@ -320,8 +335,15 @@ void CodeGen::emit_epilogue(Lam* lam) {
             }
         }
         return bb.tail("br label {}", id(callee));
-    } else if (auto callee = app->callee()->isa_nom<Lam>()) { // function call
-        auto ret_lam = app->args().back()->as_nom<Lam>();
+    } else if (auto longjmp = isa<Tag::LongJmp>(app)) {
+        auto [mem, jbuf, tag] = app->args<3>();
+        emit_unsafe(mem);
+        auto emitted_jb = emit(jbuf);
+        auto emitted_tag = emit(tag);
+        bb.tail("call void @longjmp(i8* {}, i32 {})", emitted_jb, emitted_tag);
+        return bb.tail("unreachable");
+    } else if (app->callee_type()->is_returning()) { // function call
+        auto emmited_callee = emit(app->callee());
 
         std::vector<std::string> args;
         auto app_args = app->args();
@@ -330,6 +352,14 @@ void CodeGen::emit_epilogue(Lam* lam) {
                 args.emplace_back(convert(arg->type()) + " " + emitted_arg);
         }
 
+        if (app->args().back()->isa<Bot>()) {
+            // TODO: Perhaps it'd be better to simply η-wrap this prior to the BE...
+            assert(convert_ret_pi(app->callee_type()->ret_pi()) == "void");
+            bb.tail("call void {}({, })", emmited_callee, args);
+            return bb.tail("unreachable");
+        }
+
+        auto ret_lam = app->args().back()->as_nom<Lam>();
         size_t num_vars = ret_lam->num_vars();
         size_t n        = 0;
         Array<const Def*> values(num_vars);
@@ -342,7 +372,7 @@ void CodeGen::emit_epilogue(Lam* lam) {
         }
 
         if (n == 0) {
-            bb.tail("call void {}({, })", id(callee), args);
+            bb.tail("call void {}({, })", emmited_callee, args);
         } else {
             auto name   = "%" + app->unique_name() + ".ret";
             auto ret_ty = convert_ret_pi(ret_lam->type());
@@ -350,7 +380,7 @@ void CodeGen::emit_epilogue(Lam* lam) {
             assert(!isa<Tag::Mem>(phi->type()));
             lam2bb_[ret_lam].phis[phi].emplace_back(name, id(lam, true));
             locals_[phi] = id(phi);
-            bb.tail("{} = call {} {}({, })", name, ret_ty, id(callee), args);
+            bb.tail("{} = call {} {}({, })", name, ret_ty, emmited_callee, args);
         }
 
         return bb.tail("br label {}", id(ret_lam));
@@ -679,19 +709,36 @@ std::string CodeGen::emit_bb(BB& bb, const Def* def) {
         auto val_t = convert(store->arg(2)->type());
         bb.body().emplace_back().fmt("store {} {}, {} {}", val_t, val, ptr_t, ptr);
         return {};
-    }
-    if (auto tuple = def->isa<Tuple>()) {
+    } else if (auto q = isa<Tag::AllocJmpBuf>(def)) {
+        emit_unsafe(q->arg());
+        auto size = name + ".size";
+        bb.assign(size, "call i64 @jmpbuf_size()");
+        return bb.assign(name, "alloca i8, i64 {}", size);
+    } else if (auto setjmp = isa<Tag::SetJmp>(def)) {
+        auto [mem, jmpbuf] = setjmp->arg()->projs<2>();
+        emit_unsafe(mem);
+        auto emitted_jb = emit(jmpbuf);
+        return bb.assign(name, "call i32 @_setjmp(i8* {})", emitted_jb);
+    } else if (auto tuple = def->isa<Tuple>()) {
         return emit_tuple(tuple);
     } else if (auto pack = def->isa<Pack>()) {
         if (auto lit = isa_lit(pack->body()); lit && *lit == 0) return "zeroinitializer";
         return emit_tuple(pack);
     } else if (auto extract = def->isa<Extract>()) {
-        auto tuple  = extract->tuple();
-        auto index  = extract->index();
+        auto tuple = extract->tuple();
+        auto index = extract->index();
+
+        if (tuple->isa<Var>()) { 
+            // computing the index may crash, so we bail out
+            assert(isa<Tag::Mem>(extract->type()) && "only mem-var should not be mapped");
+            return {};
+        }
+
         auto ll_tup = emit_unsafe(tuple);
         auto ll_idx = emit(index);
 
-        if (isa<Tag::Mem>(extract->type())) return {};
+        if (isa<Tag::Mem>(extract->type())) 
+            return {};
 
         if (tuple->num_projs() == 2) {
             if (isa<Tag::Mem>(tuple->proj(2, 0_s)->type())) return ll_tup;

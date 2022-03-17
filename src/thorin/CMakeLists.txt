@@ -62,6 +62,10 @@ add_library(libthorin
     pass/rw/auto_diff.h
         pass/rw/peephole.cpp
         pass/rw/peephole.h
+    pass/fp/unbox_closures.h
+    pass/fp/unbox_closures.cpp
+    pass/fp/closure_analysis.h
+    pass/fp/closure_analysis.cpp
     pass/fp/tail_rec_elim.cpp
     pass/fp/tail_rec_elim.h
     pass/rw/alloc2malloc.cpp
@@ -78,6 +82,10 @@ add_library(libthorin
     pass/rw/bound_elim.h
     pass/rw/scalarize.cpp
     pass/rw/scalarize.h
+    pass/rw/cconv_prepare.h
+    pass/rw/cconv_prepare.cpp
+    pass/rw/closure2sjlj.h
+    pass/rw/closure2sjlj.cpp
     transform/cleanup_world.cpp
     transform/cleanup_world.h
     transform/mangle.cpp
@@ -86,6 +94,8 @@ add_library(libthorin
     transform/partial_evaluation.h
     transform/closure_conv.h
     transform/closure_conv.cpp
+    transform/lower_typed_closures.h
+    transform/lower_typed_closures.cpp
     util/array.h
     util/assert.h
     util/bitset.cpp

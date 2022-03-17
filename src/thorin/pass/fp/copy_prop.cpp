@@ -7,7 +7,7 @@ namespace thorin {
 
 const Def* CopyProp::rewrite(const Def* def) {
     auto [app, var_lam] = isa_apped_nom_lam(def);
-    if (!isa_workable(var_lam)) return def;
+    if (!isa_workable(var_lam) || (bb_only_ && var_lam->is_returning())) return def;
 
     auto n = app->num_args();
     if (n == 0) return app;
@@ -63,8 +63,8 @@ const Def* CopyProp::rewrite(const Def* def) {
         prop_lam      = var_lam->stub(world(), new_pi, var_lam->dbg());
 
         world().DLOG("new prop_lam: {}", prop_lam);
-        beta_red_->keep(prop_lam);
-        eta_exp_->new2old(prop_lam, var_lam);
+        if (beta_red_) beta_red_->keep(prop_lam);
+        if (eta_exp_)  eta_exp_->new2old(prop_lam, var_lam);
 
         size_t j = 0;
         DefArray new_vars(n, [&, prop_lam = prop_lam](size_t i) -> const Def* {

@@ -478,6 +478,9 @@ public:
     }
     const Def* op_malloc(const Def* type, const Def* mem, const Def* dbg = {});
     const Def* op_mslot(const Def* type, const Def* mem, const Def* id, const Def* dbg = {});
+    const Def* op_alloc_jumpbuf(const Def* mem, const Def* dbg = {}) { return app(data_.sjlj_alloc_jmpbuf, {tuple(), mem}, dbg); }
+    const Def* op_setjmp(const Def* mem, const Def* buf, const Def* dbg = {})  { return app(data_.sjlj_setjmp_,  {mem, buf}, dbg); }
+    const Def* op_longjmp(const Def* mem, const Def* buf, const Def* id, const Def* dbg = {}) { return app(data_.sjlj_longjmp_, {mem, buf, id}, dbg); }
     // clang-format off
     const Def* op_for(Defs paramTypes, const Def* mem, const Def* start, const Def* stop, const Def* step, Defs initAcc, const Def* body, const Def* brk);
     // clang-format on
@@ -507,6 +510,15 @@ public:
     const Def* op_rev_diff(const Def* fn, const Def* dbg = {});
     const Def* tangent_type(const Def* A, bool left=false);
     //@}
+
+    const Def* cconv_mark(const Def* def, CConv a, const Def* dbg = {}) {
+        switch (a) {
+#define CODE(T, o) case T::o: return app(app(data_.cconv_ ## o ## _, def->type()), def, dbg);
+            THORIN_CCONV (CODE)
+#undef CODE
+            default: return def;
+        }
+    }
 
     /// @name helpers
     ///@{
@@ -784,7 +796,15 @@ private:
         const Axiom* type_real_;
         const Axiom* op_rev_diff_;
         const Axiom* zip_;
+        const Axiom* cconv_ret_;
+        const Axiom* cconv_freeBB_;
+        const Axiom* cconv_fstclassBB_;
+        const Axiom* cconv_escaping_;
+        const Axiom* sjlj_alloc_jmpbuf;
+        const Axiom* sjlj_setjmp_;
+        const Axiom* sjlj_longjmp_;
         const Axiom* for_;
+        
         std::string name_;
         Externals externals_;
         Sea defs_;
