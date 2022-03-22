@@ -101,11 +101,28 @@ void optimize(World& world) {
     printf("Finished Closur Prepare Opti\n");
 
     closure_conv(world);
-    lower_closures(world);
     printf("Finished Closure Opti\n");
+
+
+
+//         PassMan opt2(world);
+//         auto br2 = opt2.add<BetaRed>();
+//         auto er2 = opt2.add<EtaRed>();
+//         auto ee2 = opt2.add<EtaExp>(er2);
+//         opt2.add<SSAConstr>(ee2);
+//         opt2.add<Scalerize>(ee2);
+//         // opt2.add<DCE>(br, ee);
+//         opt2.add<CopyProp>(br2, ee2);
+//         opt2.run();
+//
+//    printf("Finished Closure Cleanup Opti\n");
+
 
     optA.run();
     printf("Finished AutoDiff Opti\n");
+
+        lower_closures(world);
+        printf("Finished Closure Lowering\n");
 
     PassMan opt(world);
     opt.add<PartialEval>();
