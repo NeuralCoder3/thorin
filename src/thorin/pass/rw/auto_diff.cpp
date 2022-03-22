@@ -2332,7 +2332,13 @@ const Def* AutoDiff::rewrite(const Def* def) {
         //           ------ type_app ------ arg
         //           (axiom    arg2       ) arg
 
-        auto src_lam = app->arg(0)->as_nom<Lam>();
+        type_dump(app->world()," arg",app->arg());
+        auto isClosure = app->num_args()>1;
+
+        auto fun_arg = isClosure ? app->arg(1) : app->arg(0);
+        type_dump(app->world()," fun arg",fun_arg);
+
+        auto src_lam = fun_arg->as_nom<Lam>();
         auto src_pi = src_lam->type();
         // function to differentiate
         // this should be something like `cn[:mem, r32, cn[:mem, r32]]`
@@ -2341,7 +2347,12 @@ const Def* AutoDiff::rewrite(const Def* def) {
         // We get for `A -> B` the type `A -> (B * (B -> A))`.
         //  i.e. cn[:mem, A, [:mem, B]] ---> cn[:mem, A, cn[:mem, B, cn[:mem, B, cn[:mem, A]]]]
         //  take input, return result and return a function (pullback) taking z and returning the derivative
-        auto dst_pi = app->type()->as<Pi>(); // multi dim as array
+        const Pi* dst_pi;
+        type_dump(world,"app type",app->type());
+        if(isClosure)
+            dst_pi = app->type()->op(1)->as<Pi>();
+        else
+            dst_pi = app->type()->as<Pi>(); // multi dim as array
         auto dst_lam = world.nom_lam(dst_pi, world.dbg("top_level_rev_diff_" + src_lam->name()));
         dst_lam->set_filter(src_lam->filter()); // copy the unfold filter
         // use src to not dilute tangent transformation with left type transformation (only matters for arrays)
@@ -2377,8 +2388,11 @@ const Def* AutoDiff::rewrite(const Def* def) {
         auto differ = AutoDiffer{world, src_to_dst, A};
         dst_lam->set_body(differ.reverse_diff(src_lam));
 
+        auto dst=isClosure ? world.insert(app->arg(),1,dst_lam) : dst_lam;
 
-        return dst_lam;
+        type_dump(world,"dst: ",dst);
+
+        return dst;
     }}}
     return def;
 }
