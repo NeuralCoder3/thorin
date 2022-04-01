@@ -594,7 +594,6 @@ private:
     World& world_;
     Def2Def src_to_dst_; // mapping old def to new def
     DefMap<const Def*> pullbacks_;  // <- maps a *copied* src term (a dst term) to its pullback function
-    DefMap<const Def*> pointer_map;
     DefMap<const Def*> structure_map;
     const Def* A, *A_src, *zero_grad;// input type
 
@@ -1049,9 +1048,9 @@ const Def* AutoDiffer::extract_pb(const Def* j_extract, const Def* tuple) {
 // loads pb from shadow slot, updates pb for the ptr, returns, mem and pb for the loaded value
 std::pair<const Def*,const Def*> AutoDiffer::reloadPtrPb(const Def* mem, const Def* ptr, const Def* dbg, bool generateLoadPb) {
     type_dump(world_,"  reload for ptr",ptr);
-    dlog(world_,"  shadow ptr {}",pointer_map[ptr]);
-    type_dump(world_,"  shadow ptr",pointer_map[ptr]);
-    auto [pb_load_mem,pb_load_fun] = world_.op_load(mem,pointer_map[ptr],dbg)->projs<2>();
+    dlog(world_,"  shadow ptr {}",structure_map[ptr]);
+    type_dump(world_,"  shadow ptr",structure_map[ptr]);
+    auto [pb_load_mem,pb_load_fun] = world_.op_load(mem,structure_map[ptr],dbg)->projs<2>();
     pullbacks_[ptr]=pb_load_fun;
     return {pb_load_mem,pb_load_fun};
 }
@@ -1212,7 +1211,7 @@ void AutoDiffer::initArg(const Def* dst) {
         auto dst_mem = current_mem;
         type_dump(world_, "Dst Mem", dst_mem);
         auto [pb_mem, pb_ptr] = ptrSlot(arg_ty, dst_mem)->projs<2>();
-        pointer_map[dst] = pb_ptr;
+        structure_map[dst] = pb_ptr;
         type_dump(world_, "Pb Slot", pb_ptr);
         type_dump(world_, "Pb Slot Mem", pb_mem);
         type_dump(world_, "Pb of var", pullbacks_[dst]);
@@ -1598,7 +1597,7 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
             type_dump(world_,"  ty",ty);
 
             auto [pb_mem, pb_ptr] = ptrSlot(ty,current_mem)->projs<2>();
-            pointer_map[dst]=pb_ptr;
+            structure_map[dst]=pb_ptr;
             auto pb_mem2 = world_.op_store(pb_mem,pb_ptr,pb,world_.dbg("pb_global"));
 
             auto [pbt_mem,pbt_pb]= reloadPtrPb(pb_mem2,dst,world_.dbg("ptr_slot_pb_loadS"),false);
@@ -1674,6 +1673,30 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
             dst_pb_org_ty=dst_arr->type();
             dst = world_.tuple({size,dst_arr});
             arg_pb_ty = arr->type();
+
+            type_dump(world_,"  structure pb of def arr: ",structure_map[arr]);
+            auto ptr_ty=as<Tag::Ptr>(dst_pb_org_ty);
+            auto [arr_ty,addr_space] = ptr_ty->arg()->projs<2>();
+            auto dst_arr_inner_ty=arr_ty->as<Arr>()->body();
+            type_dump(world_,"  arr_ty: ",arr_ty);
+            type_dump(world_,"  dst_arr_inner_ty: ",dst_arr_inner_ty);
+            auto inner_pb_type = createPbType(A,dst_arr_inner_ty);
+            type_dump(world_,"  inner_pb_type: ",inner_pb_type);
+            auto arr_pb_ty = world_.arr(arr_ty->as<Arr>()->shape(),inner_pb_type);
+            type_dump(world_,"  arr_pb_ty: ",arr_pb_ty);
+
+            auto dst_arr_ty = world_.type_ptr(arr_pb_ty,addr_space);
+            type_dump(world_,"  dst_pb_org_ty: ",dst_pb_org_ty);
+            type_dump(world_,"  dst_arr_ty: ",dst_arr_ty);
+            
+            auto cast_pb_arr=world_.op_bitcast(dst_arr_ty,structure_map[arr],world_.dbg("cast_pb_arr"));
+            structure_map[dst_arr]=cast_pb_arr;
+            structure_map[dst]=structure_map[dst_arr];
+            pullbacks_[dst_arr]=cast_pb_arr;
+            pullbacks_[dst]=pullbacks_[dst_arr];
+            type_dump(world_,"  set pb:",pullbacks_[dst]);
+
+            return dst;
         }else {
             dst = world_.app(cast->callee(),args);
             dst_pb_org_ty=dst->type();
@@ -1762,7 +1785,30 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
 
         auto mem_arg = j_wrap(alloc->arg());
 
-        auto dst_alloc = world_.op_alloc(type,mem_arg,alloc->dbg());
+
+        // first pb (shadow array) to interleave with memory
+
+        // shadow arrow
+        type_dump(world_,"  ptr_type",ptr_type);
+        type_dump(world_,"  base_type",base_type);
+        auto inner_type = base_type->as<Arr>()->body();
+        auto arr_shape = base_type->as<Arr>()->shape();
+        type_dump(world_,"  inner_type",inner_type);
+        type_dump(world_,"  shape",arr_shape);
+        // auto pb_ty = world_.arr()
+        auto pb_inner_ty = createPbType(A,inner_type);
+        type_dump(world_,"  pb_inner",pb_inner_ty);
+        auto pb_arr_ty=world_.arr(arr_shape,pb_inner_ty);
+        type_dump(world_,"  pb_arr_ty",pb_arr_ty);
+        auto shadow_alloc = world_.op_alloc(pb_arr_ty,mem_arg,world_.dbg(alloc->name()+"_shadow"));
+        auto [shadow_mem,shadow_arr] = shadow_alloc->projs<2>();
+
+        type_dump(world_,"  shadow_alloc",shadow_alloc);
+        type_dump(world_,"  shadow_arr",shadow_arr);
+
+
+
+        auto dst_alloc = world_.op_alloc(type,shadow_mem,alloc->dbg());
         auto [r_mem,arr] = dst_alloc->projs<2>();
         type_dump(world_,"  orig alloc",alloc);
         type_dump(world_,"  dst alloc",dst_alloc);
@@ -1785,7 +1831,7 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
 
         // no shadow needed
         // TODO: shadow if one handles alloc like a ptr (for definite)
-        auto pb = zero_pb(ptr_type,world_.dbg("pb_alloc"));
+        // auto pb = zero_pb(ptr_type,world_.dbg("pb_alloc"));
 
 //                auto pb_ty = createPbType(A,ptr_type);
 //                type_dump(world_,"  pb_ty",pb_ty);
@@ -1796,8 +1842,14 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
 //                auto z = zero_grad;//ZERO(world_,pb->mem_var(),A);
 //                pb->set_body( world_.app(pb->ret_var(), flat_tuple({z_mem,z})));
 
-        type_dump(world_,"  alloc pb",pb);
-                pullbacks_[arr] = pb;
+        // type_dump(world_,"  alloc pb",pb);
+                // pullbacks_[arr] = pb;
+                structure_map[arr] = shadow_arr;
+                structure_map[dst_fat_ptr] = structure_map[arr];
+                structure_map[dst] = structure_map[arr];
+                structure_map[dst_alloc] = structure_map[arr];
+                // TODO: correctly this has to be the weighted sum
+                pullbacks_[arr] = shadow_arr;
                 pullbacks_[dst_fat_ptr]=pullbacks_[arr];
                 pullbacks_[dst]=pullbacks_[arr]; // for call f(rmem, arr)
                 pullbacks_[dst_alloc]=pullbacks_[arr]; // for mem extract
@@ -1839,66 +1891,68 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
         type_dump(world_,"  dst lea:", dst);
 
 
-        auto [arr_ty, arr_addr_space] = as<Tag::Ptr>(arr->type())->arg()->projs<2>();
+        // auto [arr_ty, arr_addr_space] = as<Tag::Ptr>(arr->type())->arg()->projs<2>();
 
-        type_dump(world_,"  ty: ",ty);
-        type_dump(world_,"  arr_ty: ",arr_ty);
-        dlog(world_,"  arr_ty_node_name: {}",arr_ty->node_name());
-        auto pi = createPbType(A,ty);
-        type_dump(world_,"  lea pi: ",pi);
-        auto pb = world_.nom_lam(pi, world_.dbg("pb_lea"));
-        pb->set_filter(world_.lit_true());
-        type_dump(world_,"  lea pb: ",pb);
+        // type_dump(world_,"  ty: ",ty);
+        // type_dump(world_,"  arr_ty: ",arr_ty);
+        // dlog(world_,"  arr_ty_node_name: {}",arr_ty->node_name());
 
 
-        type_dump(world_,"  arr size",arr_size);
-        auto arr_size_nat = world_.op_bitcast(world_.type_nat(),arr_size);
-        type_dump(world_,"  arr size nat",arr_size_nat);
-        auto arr_sized_ty=world_.arr(arr_size_nat,arr_ty->as<Arr>()->body())->as<Arr>();
-//        auto arr_sized_ty=arr_ty;
-        type_dump(world_,"  arr_sized_ty",arr_sized_ty);
-        auto ptr_arr_sized_ty = world_.type_ptr(arr_sized_ty);
-        type_dump(world_,"  ptr_arr_sized_ty",ptr_arr_sized_ty);
-//        auto [mem2,ptr_arr] = ZERO(world_,pb->mem_var(),ptr_arr_sized_ty);
-        // TODO: merge with ZERO?
+        // auto pi = createPbType(A,ty);
+        // type_dump(world_,"  lea pi: ",pi);
+        // auto pb = world_.nom_lam(pi, world_.dbg("pb_lea"));
+        // pb->set_filter(world_.lit_true());
+        // type_dump(world_,"  lea pb: ",pb);
 
-        auto [mem2,ptr_arr]=world_.op_alloc(arr_sized_ty,pb->mem_var())->projs<2>();
-        auto shape=arr_sized_ty->shape();
-        type_dump(world_,"ptr arr shape",shape);
-        auto body = arr_sized_ty->body();
-        type_dump(world_,"ptr arr body",body);
-        auto [mem3, body_lit] = ZERO(world_,mem2,body);
-        type_dump(world_,"ptr arr body lit",body_lit);
-        auto init=world_.pack(shape,body_lit);
-        type_dump(world_,"init pack",init); // trick for zero init
-        auto mem4=world_.op_store(mem3,ptr_arr,init);
-        type_dump(world_,"ptr arr",ptr_arr);
+
+//         type_dump(world_,"  arr size",arr_size);
+//         auto arr_size_nat = world_.op_bitcast(world_.type_nat(),arr_size);
+//         type_dump(world_,"  arr size nat",arr_size_nat);
+//         auto arr_sized_ty=world_.arr(arr_size_nat,arr_ty->as<Arr>()->body())->as<Arr>();
+// //        auto arr_sized_ty=arr_ty;
+//         type_dump(world_,"  arr_sized_ty",arr_sized_ty);
+//         auto ptr_arr_sized_ty = world_.type_ptr(arr_sized_ty);
+//         type_dump(world_,"  ptr_arr_sized_ty",ptr_arr_sized_ty);
+// //        auto [mem2,ptr_arr] = ZERO(world_,pb->mem_var(),ptr_arr_sized_ty);
+//         // TODO: merge with ZERO?
+
+        // auto [mem2,ptr_arr]=world_.op_alloc(arr_sized_ty,pb->mem_var())->projs<2>();
+        // auto shape=arr_sized_ty->shape();
+        // type_dump(world_,"ptr arr shape",shape);
+        // auto body = arr_sized_ty->body();
+        // type_dump(world_,"ptr arr body",body);
+        // auto [mem3, body_lit] = ZERO(world_,mem2,body);
+        // type_dump(world_,"ptr arr body lit",body_lit);
+        // auto init=world_.pack(shape,body_lit);
+        // type_dump(world_,"init pack",init); // trick for zero init
+        // auto mem4=world_.op_store(mem3,ptr_arr,init);
+        // type_dump(world_,"ptr arr",ptr_arr);
 
 //        return {mem4,ptr_arr};
 //        THORIN_UNREACHABLE;
 //        type_dump(world_,"  ptr_arr",ptr_arr);
 
-        assert(pullbacks_.count(fat_ptr) && "arr from lea should already have an pullback");
+        // assert(pullbacks_.count(fat_ptr) && "arr from lea should already have an pullback");
 
-        type_dump(world_,"  fat_ptr pb",pullbacks_[fat_ptr]);
-        auto ptr_arr_idef = pullbacks_[fat_ptr]->type()->as<Pi>()->dom(2);
-        dlog(world_,"  pullback arr arg: {}", ptr_arr_idef);
-        auto ptr_arr_arg = world_.op_bitcast(ptr_arr_idef,ptr_arr);
-        type_dump(world_,"  ptr_arr casted:",ptr_arr_arg);
-        auto fat_ptr_arr_arg = world_.tuple({arr_size,ptr_arr_arg});
-        type_dump(world_,"  ptr_arr fat_ptr:",fat_ptr_arr_arg);
-
-
-        auto scal_ptr = world_.op_lea(ptr_arr_arg,idx);
-//        auto mem3=mem2;
-        auto v = pb->var(1);
-        auto mem5 = world_.op_store(mem4,scal_ptr,v);
-        type_dump(world_,"  ptr_arr",ptr_arr);
-        type_dump(world_,"  ptr_arr_arg",ptr_arr_arg);
+        // type_dump(world_,"  fat_ptr pb",pullbacks_[fat_ptr]);
+        // auto ptr_arr_idef = pullbacks_[fat_ptr]->type()->as<Pi>()->dom(2);
+        // dlog(world_,"  pullback arr arg: {}", ptr_arr_idef);
+        // auto ptr_arr_arg = world_.op_bitcast(ptr_arr_idef,ptr_arr);
+        // type_dump(world_,"  ptr_arr casted:",ptr_arr_arg);
+        // auto fat_ptr_arr_arg = world_.tuple({arr_size,ptr_arr_arg});
+        // type_dump(world_,"  ptr_arr fat_ptr:",fat_ptr_arr_arg);
 
 
-        dlog(world_,"  pullback of arr (or rather its fat_ptr): {}",pullbacks_[fat_ptr]);
-        dlog(world_,"  of type: {}",pullbacks_[fat_ptr]->type());
+//         auto scal_ptr = world_.op_lea(ptr_arr_arg,idx);
+// //        auto mem3=mem2;
+//         auto v = pb->var(1);
+//         auto mem5 = world_.op_store(mem4,scal_ptr,v);
+//         type_dump(world_,"  ptr_arr",ptr_arr);
+//         type_dump(world_,"  ptr_arr_arg",ptr_arr_arg);
+
+
+        // dlog(world_,"  pullback of arr (or rather its fat_ptr): {}",pullbacks_[fat_ptr]);
+        // dlog(world_,"  of type: {}",pullbacks_[fat_ptr]->type());
 
 //        dlog(world_,"  pullback type num_ops: {}",pullbacks_[fat_ptr]->type()->num_ops());
 //        dlog(world_,"  pullback type num_projs: {}",pullbacks_[fat_ptr]->type()->num_projs());
@@ -1907,25 +1961,32 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
 
 
 
-        type_dump(world_,"  lea pb type:",pb);
+        // type_dump(world_,"  lea pb type:",pb);
 
-        pb->set_body( world_.app(
-            pullbacks_[fat_ptr],
-            flat_tuple({
-                mem5,
-                fat_ptr_arr_arg,
-                pb->ret_var()
-            })
-            ));
+        // pb->set_body( world_.app(
+        //     pullbacks_[fat_ptr],
+        //     flat_tuple({
+        //         mem5,
+        //         fat_ptr_arr_arg,
+        //         pb->ret_var()
+        //     })
+        //     ));
 
 
-        auto [cmem2,ptr_slot]=world_.op_slot(pb->type(),current_mem,world_.dbg("lea_ptr_shadow_slot"))->projs<2>();
-        auto cmem3=world_.op_store(cmem2,ptr_slot,pb);
-        pointer_map[dst]=ptr_slot;
+        // auto [cmem2,ptr_slot]=world_.op_slot(pb->type(),current_mem,world_.dbg("lea_ptr_shadow_slot"))->projs<2>();
+        // auto cmem3=world_.op_store(cmem2,ptr_slot,pb);
+        // structure_map[dst]=ptr_slot;
 
         // instead of reload because we have no toplevel mem here
         // and this point dominates all usages
 
+        auto pb_arr = structure_map[arr];
+        type_dump(world_,"  pb_arr:",pb_arr);
+        auto pb=world_.op_lea(pb_arr,idx);
+        type_dump(world_,"  pb:",pb);
+        structure_map[dst]=pb;
+
+        auto cmem3 = current_mem;
         auto [cmem4, _]= reloadPtrPb(cmem3,dst,world_.dbg("lea_shadow_load"),false);
         current_mem=cmem4;
 
@@ -2011,8 +2072,8 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
                     type_dump(world_,"  slot dst ptr",dst_ptr);
                     type_dump(world_,"  slot pb ptr",pb_ptr);
 
-                    pointer_map[dst]=pb_ptr; // for mem tuple extract
-                    pointer_map[dst_ptr]=pb_ptr;
+                    structure_map[dst]=pb_ptr; // for mem tuple extract
+                    structure_map[dst_ptr]=pb_ptr;
                     // to prevent error in load for tuple pb
 //                    pullbacks_[dst]=zero_pb;
                     auto [nmem,pb_loaded]=reloadPtrPb(dst_mem,dst_ptr,world_.dbg("ptr_slot_pb_loadL"),true);
@@ -2034,14 +2095,14 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
                     auto [mem, ptr, val] = j_args->projs<3>();
                     type_dump(world_,"  got ptr at store ",ptr);
 
-                    assert(pointer_map.count(ptr) && "ptr should have a shadow slot at a store location");
+                    assert(structure_map.count(ptr) && "ptr should have a shadow slot at a store location");
 
-                    type_dump(world_,"  got ptr pb slot ",pointer_map[ptr]);
+                    type_dump(world_,"  got ptr pb slot ",structure_map[ptr]);
                     type_dump(world_,"  got val ",val);
 
                     auto pb=pullbacks_[val];
 
-                    auto pb_mem = world_.op_store(mem,pointer_map[ptr],pb,world_.dbg("pb_store"));
+                    auto pb_mem = world_.op_store(mem,structure_map[ptr],pb,world_.dbg("pb_store"));
 
                     // necessary to access ptr pb when calling
                     // all other accesses are handled by load of the ptr with corresponding pb slot load
