@@ -969,9 +969,11 @@ const Def* AutoDiffer::extract_pb(const Def* j_extract, const Def* tuple) {
     if(auto lit = idx->isa<Lit>()) {
         // would save from tuples
         // but can not occur as partial evaluation removes such projections
-//        if(structure_map.count(tuple)) {
-//            dlog(world_,"  const extract from local tuple");
-//        }
+        if(structure_map.count(tuple)) {
+            dlog(world_,"  const extract from local tuple");
+            auto pb = world_.extract_unsafe(structure_map[tuple],lit);
+            return pb;
+        }
 
         dlog(world_,"  extract pb for lit index");
         auto isMemTuple=isa<Tag::Mem>(tuple->type()->proj(0));
