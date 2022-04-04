@@ -101,6 +101,7 @@ void optimize(World& world) {
     printf("Finished Closur Prepare Opti\n");
 
     closure_conv(world);
+    lower_closures(world);
     printf("Finished Closure Opti\n");
 
 
