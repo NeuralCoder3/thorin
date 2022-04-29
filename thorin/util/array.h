@@ -12,11 +12,15 @@
 #include <ranges>
 #include <type_traits>
 #include <vector>
+#include <memory>
 
 namespace thorin {
 
 template<class T>
 class Array;
+
+template<class T>
+class ArrayStorage;
 
 //------------------------------------------------------------------------------
 
@@ -38,30 +42,45 @@ public:
     ///@{
     ArrayRef()
         : size_(0)
-        , ptr_(nullptr) {}
+        , offset_(0)
+        , storage_(nullptr) {}
     ArrayRef(size_t size, const T* ptr)
         : size_(size)
-        , ptr_(ptr) {}
+        , offset_(0)
+        , storage_(std::make_shared<ArrayStorage<T>>(size_, const_cast<T*>(ptr))){ }
+    ArrayRef(size_t size, size_t offset, std::shared_ptr<ArrayStorage<T>> ptr)
+        : size_(size)
+        , offset_(offset)
+        , storage_(ptr) {}
     template<size_t N>
     ArrayRef(const T (&ptr)[N])
         : size_(N)
-        , ptr_(ptr) {}
+        , offset_(0)
+        , storage_(std::make_shared<ArrayStorage<T>>(size_, const_cast<T*>(ptr))) {}
     ArrayRef(const ArrayRef<T>& ref)
         : size_(ref.size_)
-        , ptr_(ref.ptr_) {}
+        , offset_(ref.offset_)
+        , storage_(ref.storage_) {}
     ArrayRef(const Array<T>& array)
         : size_(array.size())
-        , ptr_(array.begin()) {}
+        , offset_(0)
+        , storage_(array.storage_) {}
+
     template<size_t N>
     ArrayRef(const std::array<T, N>& array)
         : size_(N)
-        , ptr_(array.data()) {}
+        , offset_(0)
+        , storage_(std::make_shared<ArrayStorage<T>>(N, const_cast<T*>(array.data())) ) {}
     ArrayRef(std::initializer_list<T> list)
         : size_(std::ranges::distance(list))
-        , ptr_(std::begin(list)) {}
+        , offset_(0)
+        , storage_(std::make_shared<ArrayStorage<T>>(size_, const_cast<T*>(std::begin(list))) ) {}
     ArrayRef(const std::vector<T>& vector)
         : size_(vector.size())
-        , ptr_(vector.data()) {}
+        , offset_(0)
+        , storage_(std::make_shared<ArrayStorage<T>>(size_, const_cast<T*>(vector.data())) ) {
+    }
+
     ArrayRef(ArrayRef&& array)
         : ArrayRef() {
         swap(*this, array);
@@ -88,8 +107,8 @@ public:
 
     /// @name begin/end iterators
     ///@{
-    const_iterator begin() const { return ptr_; }
-    const_iterator end() const { return ptr_ + size_; }
+    const_iterator begin() const { return storage_ == nullptr ? 0 : storage_->data() + offset_; }
+    const_iterator end() const { return begin() + size_; }
     const_reverse_iterator rbegin() const { return const_reverse_iterator(end()); }
     const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
     ///@}
@@ -98,30 +117,33 @@ public:
     ///@{
     const T& operator[](size_t i) const {
         assert(i < size() && "index out of bounds");
-        return *(ptr_ + i);
+        return storage_->data()[i + offset_];
     }
     T const& front() const {
         assert(!empty());
-        return ptr_[0];
+        return this->operator[](0);
     }
     T const& back() const {
         assert(!empty());
-        return ptr_[size_ - 1];
+        return this->operator[](size_ - 1);
     }
     ///@}
 
     /// @name slice
     ///@{
-    ArrayRef<T> skip(size_t front = 1, size_t back = 1) const { return ArrayRef<T>(size() - ( front + back ), ptr_ + front); }
+    ArrayRef<T> skip(size_t front = 1, size_t back = 1) const {
+        assert(size() >= front + back);
+        return ArrayRef<T>(size() - ( front + back ), offset_ + front, storage_ );
+    }
     ArrayRef<T> skip_front(size_t num = 1) const { return skip(num,0); }
     ArrayRef<T> skip_back(size_t num = 1) const { return skip(0,num); }
     ArrayRef<T> get_front(size_t num = 1) const {
         assert(num <= size());
-        return ArrayRef<T>(num, ptr_);
+        return ArrayRef<T>(num, 0, storage_);
     }
     ArrayRef<T> get_back(size_t num = 1) const {
         assert(num <= size());
-        return ArrayRef<T>(num, ptr_ + size() - num);
+        return ArrayRef<T>(num, offset_ + size() - num, storage_);
     }
     Array<T> cut(ArrayRef<size_t> indices, size_t reserve = 0) const;
     ///@}
@@ -130,18 +152,19 @@ public:
     ///@{
     template<class Other>
     bool operator==(const Other& other) const {
-        return this->size() == other.size() && std::equal(begin(), end(), other.begin());
+        return this->size() == other.size() && this->offset_ == other.offset_ && std::equal(begin(), end(), other.begin());
     }
     template<class Other>
     bool operator!=(const Other& other) const {
-        return this->size() != other.size() || !std::equal(begin(), end(), other.begin());
+        return this->size() != other.size() || this->offset_ != other.offset_ || !std::equal(begin(), end(), other.begin());
     }
     ///@}
 
     friend void swap(ArrayRef<T>& a1, ArrayRef<T>& a2) {
         using std::swap;
         swap(a1.size_, a2.size_);
-        swap(a1.ptr_, a2.ptr_);
+        swap(a1.offset_, a2.offset_);
+        swap(a1.storage_, a2.storage_);
     }
 
     template<typename Result = T >
@@ -160,77 +183,35 @@ public:
     }
 private:
     size_t size_;
-    const T* ptr_;
+    size_t offset_;
+    std::shared_ptr<ArrayStorage<T>> storage_;
 };
 
 //------------------------------------------------------------------------------
 
-template<typename T, size_t StackSize>
-class ArrayStorage {
-    // Unions only work with trivial types.
-    static_assert(std::is_trivial<T>::value, "Stack based array storage is only available for trivial types");
-
-public:
-    ArrayStorage()
-        : size_(0)
-        , stack_(true) {}
-    ArrayStorage(size_t size) {
-        size_  = size;
-        stack_ = size <= StackSize;
-        if (!stack_) data_.ptr = new T[size]();
-    }
-    ArrayStorage(ArrayStorage&& other)
-        : size_(other.size_)
-        , stack_(other.stack_)
-        , data_(std::move(other.data_)) {
-        other.stack_ = true;
-        other.size_  = 0;
-    }
-
-    ~ArrayStorage() {
-        if (!stack_) delete[] data_.ptr;
-    }
-
-    size_t size() const { return size_; }
-    void shrink(size_t new_size) { size_ = new_size; }
-    T* data() { return stack_ ? data_.elems : data_.ptr; }
-    const T* data() const { return stack_ ? data_.elems : data_.ptr; }
-
-    friend void swap(ArrayStorage& a, ArrayStorage& b) {
-        auto size  = a.size_;
-        a.size_    = b.size_;
-        b.size_    = size;
-        auto stack = a.stack_;
-        a.stack_   = b.stack_;
-        b.stack_   = stack;
-        std::swap(a.data_, b.data_);
-    }
-
-private:
-    size_t size_ : sizeof(size_t) * 8 - 1;
-    bool stack_ : 1;
-    union {
-        T* ptr;
-        T elems[StackSize];
-    } data_;
-};
-
 template<typename T>
-struct ArrayStorage<T, 0> {
+struct ArrayStorage {
 public:
     ArrayStorage()
         : size_(0)
+        , reference(true)
         , ptr_(nullptr) {}
     ArrayStorage(size_t size)
         : size_(size)
+        , reference(false)
         , ptr_(new T[size]) {}
+    ArrayStorage(size_t size, T* ptr)
+        : size_(size)
+        , reference(true)
+        , ptr_(ptr) {}
     ArrayStorage(ArrayStorage&& other)
         : size_(std::move(other.size_))
+        , reference(false)
         , ptr_(std::move(other.ptr_)) {
         other.ptr_  = nullptr;
         other.size_ = 0;
     }
-    ~ArrayStorage() { delete[] ptr_; }
+    ~ArrayStorage() { if(!reference) delete[] ptr_; }
 
     size_t size() const { return size_; }
     void shrink(size_t new_size) { size_ = new_size; }
@@ -243,6 +224,7 @@ public:
     }
 
 private:
+    bool reference;
     size_t size_;
     T* ptr_;
 };
@@ -267,40 +249,43 @@ public:
     /// @name constructor, destructor & assignment
     ///@{
     Array()
-        : storage_(0) {}
+        : Array(0) {}
+
     explicit Array(size_t size)
-        : storage_(size) {
+        : storage_(std::make_shared<ArrayStorage<T>>(size)) {
         for (auto& elem : *this) new (&elem) T();
     }
     Array(size_t size, const T& val)
-        : storage_(size) {
+        : Array(size) {
         std::ranges::fill(*this, val);
     }
     Array(ArrayRef<T> ref)
-        : storage_(ref.size()) {
+        : Array(ref.size()) {
         std::ranges::copy(ref, begin());
     }
     Array(Array&& other)
-        : storage_(std::move(other.storage_)) {}
+        : Array( other.storage_->size() ) {
+        std::copy(other.storage_->data(), other.storage_->data() + other.storage_->size(), data());
+    }
     Array(const Array& other)
-        : storage_(other.size()) {
+        : Array(other.size()) {
         std::ranges::copy(other, begin());
     }
     Array(const std::vector<T>& other)
-        : storage_(other.size()) {
+        : Array(other.size()) {
         std::ranges::copy(other, begin());
     }
     template<class I>
     Array(const I begin, const I end)
-        : storage_(std::distance(begin, end)) {
+        : Array(std::distance(begin, end)) {
         std::copy(begin, end, data());
     }
     Array(std::initializer_list<T> list)
-        : storage_(std::ranges::distance(list)) {
+        : Array(std::ranges::distance(list)) {
         std::ranges::copy(list, data());
     }
     Array(size_t size, std::function<T(size_t)> f)
-        : storage_(size) {
+        : Array(size) {
         for (size_t i = 0; i != size; ++i) (*this)[i] = f(i);
     }
 
@@ -312,11 +297,11 @@ public:
 
     /// @name size
     ///@{
-    size_t size() const { return storage_.size(); }
+    size_t size() const { return storage_->size(); }
     bool empty() const { return size() == 0; }
     void shrink(size_t new_size) {
         assert(new_size <= size());
-        storage_.shrink(new_size);
+        storage_->shrink(new_size);
     }
     ///@}
 
@@ -350,8 +335,8 @@ public:
         assert(!empty());
         return data()[size() - 1];
     }
-    T* data() { return storage_.data(); }
-    const T* data() const { return storage_.data(); }
+    T* data() { return storage_->data(); }
+    const T* data() const { return storage_->data(); }
     T& operator[](size_t i) {
         assert(i < size() && "index out of bounds");
         return data()[i];
@@ -364,25 +349,25 @@ public:
 
     /// @name slice
     ///@{
-    ArrayRef<T> skip(size_t front = 1, size_t back = 1) const { return ArrayRef<T>(size() - ( front + back ), data() + front); }
-    ArrayRef<T> skip_front(size_t num = 1) const { return ArrayRef<T>(size() - num, data() + num); }
-    ArrayRef<T> skip_back(size_t num = 1) const { return ArrayRef<T>(size() - num, data()); }
+    ArrayRef<T> skip(size_t front = 1, size_t back = 1) const { return ref().skip(front, back); }
+    ArrayRef<T> skip_front(size_t num = 1) const { return ref().skip_front(num); }
+    ArrayRef<T> skip_back(size_t num = 1) const { return ref().skip_back(num); }
     ArrayRef<T> get_front(size_t num = 1) const {
         assert(num <= size());
-        return ArrayRef<T>(num, data());
+        return ArrayRef<T>(num, 0, storage_);
     }
     ArrayRef<T> get_back(size_t num = 1) const {
         assert(num <= size());
-        return ArrayRef<T>(num, data() + size() - num);
+        return ArrayRef<T>(num, size() - num, storage_);
     }
     Array<T> cut(ArrayRef<size_t> indices, size_t reserve = 0) const {
-        return ArrayRef<T>(*this).cut(indices, reserve);
+        return ref().cut(indices, reserve);
     }
     ///@}
 
     /// @name convert
     ///@{
-    ArrayRef<T> ref() const { return ArrayRef<T>(size(), data()); }
+    ArrayRef<T> ref() const { return ArrayRef<T>(*this); }
     template<size_t N>
     std::array<T, N> to_array() const {
         return ref().template to_array<N>();
@@ -398,7 +383,8 @@ public:
     friend void swap(Array& a, Array& b) { swap(a.storage_, b.storage_); }
 
 private:
-    ArrayStorage<T, std::is_trivial<T>::value ? 5 : 0> storage_;
+    friend ArrayRef<T>;
+    std::shared_ptr<ArrayStorage<T>> storage_;
 };
 
 template<class T>
