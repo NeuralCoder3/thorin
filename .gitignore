@@ -18,3 +18,4 @@ src/thorin/config.h
 .cache
 .idea
 cmake-build-debug
+.DS_Store
