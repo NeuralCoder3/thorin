@@ -651,6 +651,8 @@ const Def* AutoDiffer::reverse_diff(Lam* src) {
         pullbacks_[dvar]= extract_pb(dvar, dst_lam->var());
         initArg(dvar);
     }
+
+    src_to_dst_[src->mem_var()] = current_mem;
     // translate the body => get correct applications of variables using pullbacks
     auto dst = j_wrap(src->body());
     return dst;
