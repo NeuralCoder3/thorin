@@ -402,6 +402,10 @@ private:
     const Def* ptrSlot(const Def* ty, const Def* mem);
     std::pair<const Def*,const Def*> reloadPtrPb(const Def* mem, const Def* ptr, const Def* dbg = {}, bool generateLoadPb=false);
 
+    void setCurrentMem(const Def* new_mem){
+        current_mem = new_mem;
+    }
+
     // next mem object to use / most recent memory object
     // no problem as control flow is handled by cps
     // alternative: j_wrap returns mem object
@@ -568,6 +572,7 @@ const Def* AutoDiffer::extract_pb(const Def* j_extract, const Def* tuple) {
     auto tuple_pb = pullbacks_[tuple];
     DefArray pb_args;
 
+    auto mem=pb->mem_var();
     // is tuple & index
     // TODO: integrate into OH
     if(auto lit = idx->isa<Lit>()) {
@@ -580,11 +585,8 @@ const Def* AutoDiffer::extract_pb(const Def* j_extract, const Def* tuple) {
         // TODO: one hot vector, mem tuple
         auto dim=pb_domain->num_ops();
         DefArray args{dim};
-        auto mem=pb->mem_var();
         for (size_t i = 0; i < dim; ++i) {
-            if(i==0)
-                args[i]=mem;
-            else if(i==dim-1) {
+            if(i==dim-1) {
                 args[i]=pb->ret_var();
             } else if(i==index_lit) {
                 args[i]= world_.tuple(vars_without_mem_cont(pb));
@@ -598,7 +600,7 @@ const Def* AutoDiffer::extract_pb(const Def* j_extract, const Def* tuple) {
         args[0]=mem;
         pb_args=args;
     }else {
-        auto [rmem, ohv] = oneHot(world_,pb->mem_var(), idx,world_.tangent_type(tuple_ty,false),nullptr,pb->var(1,world_.dbg("s")));
+        auto [rmem, ohv] = oneHot(world_,mem , idx,world_.tangent_type(tuple_ty,false),nullptr,pb->var(1,world_.dbg("s")));
         pb_args=
             flat_tuple({
                 rmem,
@@ -623,7 +625,7 @@ std::pair<const Def*,const Def*> AutoDiffer::reloadPtrPb(const Def* mem, const D
 const Def* AutoDiffer::reverse_diff(Lam* src) {
     // For each param, create an appropriate pullback. It is just the (one-hot) identity function for each of those.
     auto dst_lam = src_to_dst_[src]->as_nom<Lam>();
-    current_mem=dst_lam->mem_var();
+    setCurrentMem(dst_lam->mem_var());
 
     auto src_var = src->var();
     auto dst_var = src_to_dst_[src_var];
@@ -636,7 +638,7 @@ const Def* AutoDiffer::reverse_diff(Lam* src) {
     auto vars = dst_lam->vars();
     auto real_params = vars.skip(1,1);
     auto [current_mem_,zero_grad_] = ZERO(world_,current_mem,A,world_.tuple(real_params));
-    current_mem=current_mem_;
+    setCurrentMem(current_mem_);
     zero_grad=zero_grad_;
     // ret only resp. non-mem, non-cont
     auto idpb_vars = idpb->vars();
@@ -649,6 +651,8 @@ const Def* AutoDiffer::reverse_diff(Lam* src) {
         pullbacks_[dvar]= extract_pb(dvar, dst_lam->var());
         initArg(dvar);
     }
+
+    src_to_dst_[src->mem_var()] = current_mem;
     // translate the body => get correct applications of variables using pullbacks
     auto dst = j_wrap(src->body());
     return dst;
@@ -674,7 +678,7 @@ void AutoDiffer::initArg(const Def* dst) {
         pointer_map[dst] = pb_ptr;
         // write the pb into the slot
         auto pb_store_mem = world_.op_store(pb_mem, pb_ptr, pullbacks_[dst], world_.dbg("pb_arg_id_store"));
-        current_mem=pb_store_mem;
+        setCurrentMem(pb_store_mem);
         return;
     }
 
@@ -919,7 +923,7 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
             pullbacks_[dst->var()] = dst->var(dst->num_vars() - 1); // pullback (for var) is the last argument
         }
 
-        current_mem=dst->mem_var();
+        setCurrentMem(dst->mem_var());
         // same as above: jwrap body
         src_to_dst_[lam] = dst; // in case of mutual/indirect recursion
         auto bdy = j_wrap(lam->body());
@@ -928,7 +932,7 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         // TODO: need pb?
         // never executed but needed for tuple pb
         pullbacks_[dst] = zero_pb(lam->type(),world_.dbg("zero_pb_lam2"));
-        current_mem=last_mem;
+        setCurrentMem(last_mem);
         return dst;
     }
     if (auto glob = def->isa<Global>()) {
@@ -945,7 +949,6 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
 
             auto [pbt_mem,pbt_pb]= reloadPtrPb(pb_mem2,dst,world_.dbg("ptr_slot_pb_loadS"),false);
 
-            current_mem=pbt_mem;
             return dst;
         }
     }
@@ -1052,11 +1055,11 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto int_size=world_.op_bitcast(world_.type_int_width(64),size);
         auto dst_fat_ptr=world_.tuple({int_size,arr});
         auto dst=world_.tuple({r_mem,dst_fat_ptr});
-        current_mem = r_mem;
+        setCurrentMem(r_mem);
 
         // no shadow needed
         // TODO: shadow if one handles alloc like a ptr (for definite)
-        auto pb = zero_pb(ptr_type,world_.dbg("pb_alloc"));
+        auto pb = zero_pb(ptr_type,world_.dbg("pb_alloc_test"));
         pullbacks_[arr] = pb;
         pullbacks_[dst_fat_ptr]=pullbacks_[arr];
         pullbacks_[dst]=pullbacks_[arr]; // for call f(rmem, arr)
@@ -1123,7 +1126,7 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         // and this point dominates all usages
 
         auto [cmem4, _]= reloadPtrPb(cmem3,dst,world_.dbg("lea_shadow_load"),false);
-        current_mem=cmem4;
+        setCurrentMem(cmem4);
 
         // in a structure preseving setting
         //   meaning diff of tuple is tuple, ...
@@ -1184,7 +1187,7 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
                     auto [nmem,pb_loaded]=reloadPtrPb(dst_mem,dst_ptr,world_.dbg("ptr_slot_pb_loadL"),true);
                     dst_mem=nmem;
                     pullbacks_[dst]=pb_loaded;
-                    current_mem=dst_mem;
+                    setCurrentMem(dst_mem);
                     return dst;
                 }
                 if (axiom->tag() == Tag::Store) {
@@ -1200,7 +1203,7 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
                     auto [pbt_mem,pbt_pb]= reloadPtrPb(pb_mem,ptr,world_.dbg("ptr_slot_pb_loadS"),false);
                     auto dst = world_.op_store(pbt_mem,ptr,val);
                     pullbacks_[dst]=pb; // should be unused
-                    current_mem=dst;
+                    setCurrentMem(dst);
                     return dst;
                 }
                 if (axiom->tag() == Tag::Load) {
@@ -1208,12 +1211,12 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
                     auto [mem, ptr] = j_args->projs<2>();
                     // TODO: where is pullbacks_[ptr] set to a nullptr? (happens in conditional stores to slot)
                     // TODO: why do we need or not need this load
-                        auto [nmem,pb_loaded]=reloadPtrPb(mem,ptr,world_.dbg("ptr_slot_pb_loadL"),true);
-                        mem=nmem;
+                    auto [nmem,pb_loaded]=reloadPtrPb(mem,ptr,world_.dbg("ptr_slot_pb_loadL"),true);
+                    mem=nmem;
                     auto dst = world_.op_load(mem,ptr);
                     auto [dst_mem,dst_val] = dst->projs<2>();
                     pullbacks_[dst]=pb_loaded; // tuple extract [mem,...]
-                    current_mem=dst_mem;
+                    setCurrentMem(dst_mem);
                     return dst;
                 }
             }
@@ -1383,8 +1386,7 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
 
     if (auto tuple = def->isa<Tuple>()) {
         auto tuple_dim=getDim(tuple->type());
-        DefArray ops{tuple_dim, [&](auto i) { return tuple->proj(i); }};
-        auto dst = j_wrap_tuple(ops);
+        auto dst = j_wrap_tuple(tuple->projs());
         return dst;
     }
 
