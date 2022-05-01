@@ -1080,9 +1080,11 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         // we can not move the shadow slot & its store into the pb (same reason as for ptr)
         auto ptr_ty = as<Tag::Ptr>(lea->type());
         auto [ty,addr_space] = ptr_ty->arg()->projs<2>();
-        auto fat_ptr=j_wrap(lea->arg(0));
+        auto src_ptr = lea->arg(0);
+        auto src_idx = lea->arg(1);
+        auto fat_ptr=j_wrap(src_ptr);
         auto [arr_size,arr] = fat_ptr->projs<2>();
-        auto idx = j_wrap(lea->arg(1)); // not necessary
+        auto idx = j_wrap(src_idx); // not necessary
         auto dst = world_.op_lea(arr,idx);
         auto [arr_ty, arr_addr_space] = as<Tag::Ptr>(arr->type())->arg()->projs<2>();
         auto pi = createPbType(A,ty);
@@ -1099,28 +1101,37 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto init=world_.pack(shape,body_lit);
         auto mem4=world_.op_store(mem3,ptr_arr,init);
         assert(pullbacks_.count(fat_ptr) && "arr from lea should already have an pullback");
-//        type_dump(world_,"fat_ptr",fat_ptr);
-//        type_dump(world_,"pb of fat_ptr",pullbacks_[fat_ptr]);
         auto ptr_arr_idef = pullbacks_[fat_ptr]->type()->as<Pi>()->dom(2);
-//        auto ptr_arr_idef = pullbacks_[fat_ptr]->type()->as<Pi>()->dom(1)->op(1); // if single fat ptr pb is non_flat
-//        type_dump(world_,"ptr_arr_idef",ptr_arr_idef);
         auto ptr_arr_arg = world_.op_bitcast(ptr_arr_idef,ptr_arr);
         auto fat_ptr_arr_arg = world_.tuple({arr_size,ptr_arr_arg});
-//        dlog(world_,"lea on ptr_arr_arg {} of type {} with idx {} : {}",ptr_arr_arg,ptr_arr_arg->type(),idx,idx->type());
         auto scal_ptr = world_.op_lea(ptr_arr_arg,idx);
         auto v = pb->var(1);
         auto mem5 = world_.op_store(mem4,scal_ptr,v);
+        auto fat_ptr_pb = pullbacks_[fat_ptr];
         pb->set_body( world_.app(
-            pullbacks_[fat_ptr],
+            fat_ptr_pb,
             flat_tuple({
                 mem5,
                 fat_ptr_arr_arg,
                 pb->ret_var()
             })
         ));
-        auto [cmem2,ptr_slot]=world_.op_slot(pb->type(),current_mem,world_.dbg("lea_ptr_shadow_slot"))->projs<2>();
-        auto cmem3=world_.op_store(cmem2,ptr_slot,pb);
-        pointer_map[dst]=ptr_slot;
+
+        const Def* ptr_shadow_array;
+        auto temp_mem = current_mem;
+        if(!structure_map.contains(arr)){
+            auto shadow_array_ty=world_.arr(arr_size_nat, pb->type())->as<Arr>();
+            auto [mem6, ptr_shadow_array_local] = world_.op_alloc(shadow_array_ty, temp_mem, world_.dbg("ptr_shadow_array"))->projs<2>();
+            temp_mem = mem6;
+            ptr_shadow_array = ptr_shadow_array_local;
+            structure_map[arr] = ptr_shadow_array;
+        }else{
+            ptr_shadow_array = structure_map[arr];
+        }
+
+        auto ptr_shadow_lea = world_.op_lea(ptr_shadow_array, idx);
+        auto cmem3=world_.op_store(temp_mem,ptr_shadow_lea,pb);
+        pointer_map[dst]=ptr_shadow_lea;
 
         // instead of reload because we have no toplevel mem here
         // and this point dominates all usages
