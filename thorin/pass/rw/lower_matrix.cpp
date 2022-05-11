@@ -8,7 +8,7 @@ namespace thorin {
 
 #define builder world().builder()
 
-bool has_scalar(MOp mop){
+bool is_scalar(MOp mop){
     switch (mop) {
         case MOp::sadd:
         case MOp::smul:
@@ -21,94 +21,13 @@ bool has_scalar(MOp mop){
     }
 }
 
-void LowerMatrix::contruct(Lam* entry, const Def* a_rows, const Def* b_cols, ConstructResult& constructResult){
-    auto [alloc_mem, result_matrix] = world().op_create_matrix(world().type_real(64), a_rows, b_cols, entry->mem_var())->projs<2>();
-
-    auto [left_row2_loop, left_row2_yield] = world().repeat(a_rows);
-    auto left_row2_loop_result = builder.mem().nom_filter_lam("left_row2_loop_result");
-
-    builder
-            .mem(left_row2_loop_result)
-            .add(result_matrix)
-            .app_body(left_row2_loop_result, entry->ret_var());
-
-    builder
-            .add(alloc_mem)
-            .add(left_row2_loop_result)
-            .app_body(entry, left_row2_loop);
-
-    auto [right_col2_loop, right_col2_yield] = world().repeat(b_cols);
-
-    builder
-            .mem(left_row2_yield)
-            .add(left_row2_yield->ret_var())
-            .app_body(left_row2_yield, right_col2_loop);
-
-
-    auto left_row_index = left_row2_yield->var(1);
-    auto right_col_index = right_col2_yield->var(1);
-
-    constructResult = {
-        .rows = a_rows,
-        .cols = b_cols,
-        .result_matrix = result_matrix,
-        .left_row_index = left_row_index,
-        .right_col_index = right_col_index,
-        .body = right_col2_yield
-    };
-}
-
-const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type){
+void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* cols, ConstructResult& constructResult){
     World& w = world();
-    auto signature = w.tuple({mop_axiom, elem_type});
-
-    if(mop_variants.contains(signature)){
-        return mop_variants[signature];
-    }
-
-    MOp mop = MOp(mop_axiom->flags());
-
-    ConstructResult constructResult{};
-    Lam* entry;
-    if(has_scalar(mop)){
-        entry = builder
-                .mem()
-                .add(elem_type)
-                .type_matrix(elem_type)
-                .add(
-                    builder.mem().type_matrix(elem_type).cn()
-                ).nom_filter_lam("matrix_mul_entry");
-
-        auto a = entry->var(1);
-        auto b = entry->var(2);
-
-        auto [b_rows, b_cols, b_ptr] = b->projs<3>();
-
-        contruct(entry, b_rows, b_cols, constructResult);
-    }else{
-        entry = builder
-                .mem()
-                .type_matrix(elem_type)
-                .type_matrix(elem_type)
-                .add(
-                    builder.mem().type_matrix(elem_type).cn()
-                ).nom_filter_lam("matrix_mul_entry");
-
-        auto a = entry->var(1);
-        auto b = entry->var(2);
-
-        auto [a_rows, a_cols, a_ptr] = a->projs<3>();
-        auto [b_rows, b_cols, b_ptr] = b->projs<3>();
-
-        contruct(entry, a_rows, b_cols, constructResult);
-    }
 
     auto [result_rows, result_cols, result_ptr] = constructResult.result_matrix->projs<3>();
-
     auto left_row_index = constructResult.left_row_index;
     auto right_col_index = constructResult.right_col_index;
     auto body = constructResult.body;
-    auto cols = constructResult.cols;
 
     switch (mop) {
         case MOp::mul: {
@@ -190,7 +109,6 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
         case MOp::sadd:
         case MOp::smul:
         case MOp::ssub: {
-            //auto rop = MOp(flags) == MOp::sadd ? ROp::add : ROp::sub;
             ROp rop;
             switch (mop) {
                 case MOp::sadd: {
@@ -225,6 +143,94 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
         }
         default: {}
     }
+}
+
+void LowerMatrix::construct_loop(Lam* entry, const Def* a_rows, const Def* b_cols, ConstructResult& constructResult){
+    auto [alloc_mem, result_matrix] = world().op_create_matrix(world().type_real(64), a_rows, b_cols, entry->mem_var())->projs<2>();
+
+    auto [left_row2_loop, left_row2_yield] = world().repeat(a_rows);
+    auto left_row2_loop_result = builder.mem().nom_filter_lam("left_row2_loop_result");
+
+    builder
+            .mem(left_row2_loop_result)
+            .add(result_matrix)
+            .app_body(left_row2_loop_result, entry->ret_var());
+
+    builder
+            .add(alloc_mem)
+            .add(left_row2_loop_result)
+            .app_body(entry, left_row2_loop);
+
+    auto [right_col2_loop, right_col2_yield] = world().repeat(b_cols);
+
+    builder
+            .mem(left_row2_yield)
+            .add(left_row2_yield->ret_var())
+            .app_body(left_row2_yield, right_col2_loop);
+
+
+    auto left_row_index = left_row2_yield->var(1);
+    auto right_col_index = right_col2_yield->var(1);
+
+    constructResult = {
+        .result_matrix = result_matrix,
+        .left_row_index = left_row_index,
+        .right_col_index = right_col_index,
+        .body = right_col2_yield
+    };
+}
+
+const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type){
+    World& w = world();
+    auto signature = w.tuple({mop_axiom, elem_type});
+
+    if(mop_variants.contains(signature)){
+        return mop_variants[signature];
+    }
+
+    MOp mop = MOp(mop_axiom->flags());
+
+    ConstructResult constructResult{};
+    Lam* entry;
+    const Def* rows;
+    const Def* cols;
+    if(is_scalar(mop)){
+        entry = builder
+                .mem()
+                .add(elem_type)
+                .type_matrix(elem_type)
+                .add(
+                    builder.mem().type_matrix(elem_type).cn()
+                ).nom_filter_lam("matrix_mul_entry");
+
+        auto a = entry->var(1);
+        auto b = entry->var(2);
+
+        auto [b_rows, b_cols, b_ptr] = b->projs<3>();
+
+        rows = b_rows;
+        cols = b_cols;
+    }else{
+        entry = builder
+                .mem()
+                .type_matrix(elem_type)
+                .type_matrix(elem_type)
+                .add(
+                    builder.mem().type_matrix(elem_type).cn()
+                ).nom_filter_lam("matrix_mul_entry");
+
+        auto a = entry->var(1);
+        auto b = entry->var(2);
+
+        auto [a_rows, a_cols, a_ptr] = a->projs<3>();
+        auto [b_rows, b_cols, b_ptr] = b->projs<3>();
+
+        rows = a_rows;
+        cols = b_cols;
+    }
+
+    construct_loop(entry, rows, cols, constructResult);
+    construct_mop(entry, mop, cols, constructResult);
 
     mop_variants[signature] = entry;
     return entry;
