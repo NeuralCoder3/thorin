@@ -58,16 +58,17 @@ void LowerMatrix::contruct(Lam* entry, const Def* a_rows, const Def* b_cols, Con
     };
 }
 
-const Lam* LowerMatrix::create_MOp_lam(const App* mopApp){
+const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type){
     World& w = world();
+    auto signature = w.tuple({mop_axiom, elem_type});
 
-    auto app = mopApp->callee()->as<App>();
-    auto elem_type = app->arg(1);
-    auto mop_axiom = app->callee()->as<Axiom>();
+    if(mop_variants.contains(signature)){
+        return mop_variants[signature];
+    }
 
     MOp mop = MOp(mop_axiom->flags());
 
-    ConstructResult constructResult;
+    ConstructResult constructResult{};
     Lam* entry;
     if(has_scalar(mop)){
         entry = builder
@@ -212,17 +213,11 @@ const Lam* LowerMatrix::create_MOp_lam(const App* mopApp){
             const Def* b = entry->var(2);
 
             auto [b_rows, b_cols, b_ptr] = b->projs<3>();
-
             auto index = w.row_col_to_index(left_row_index, right_col_index, cols);
-
             auto right_ptr = w.op_lea(b_ptr, index);
-
             auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), right_ptr)->projs<2>();
-
             auto result = w.op(rop, (nat_t)0, a, right_value);
-
             auto result_lea = w.op_lea(result_ptr, index);
-
             auto store_mem = w.op_store(right_load_mem, result_lea, result);
 
             builder.add(store_mem).app_body(body, body->ret_var());
@@ -231,6 +226,7 @@ const Lam* LowerMatrix::create_MOp_lam(const App* mopApp){
         default: {}
     }
 
+    mop_variants[signature] = entry;
     return entry;
 }
 
@@ -262,13 +258,12 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         currentMem = enter->mem_var();
         auto arg_wrap = rewrite_rec(arg);
 
-        auto elem_type = world().elem_ty_of_matrix(arg_wrap->op(2));
-        auto mop_lam = create_MOp_lam(mop);//MOp(mop.flags()), elem_type);
-        auto result_lam = builder.mem().type_matrix(elem_type).nom_filter_lam("mat_mul_res");
-        //assert(arg_wrap->proj(0) == currentMem);
-        builder.flatten(arg_wrap).add(result_lam).app_body(enter, mop_lam);
+        auto elem_type = mop->callee()->as<App>()->arg(1);
+        auto mop_axiom = mop.axiom();
 
-        //builder.add(alloc_mem).add(test_matrix).app_body(enter, result_lam);
+        auto mop_lam = create_MOp_lam(mop_axiom, elem_type);
+        auto result_lam = builder.mem().type_matrix(elem_type).nom_filter_lam("mat_mul_res");
+        builder.flatten(arg_wrap).add(result_lam).app_body(enter, mop_lam);
         builder.mem(result_lam).app_body(result_lam, exit);
 
         if(head == nullptr){
@@ -280,10 +275,6 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         return result;
     }else if(auto app = current->isa<App>()){
         auto arg = app->arg();
-        app->dump();
-        app->type()->dump();
-        app->callee()->dump();
-        app->callee()->type()->dump();
         auto args_rewritten = rewrite_rec(arg);
         auto arg_proj = args_rewritten->projs();
 
