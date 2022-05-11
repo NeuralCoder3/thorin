@@ -99,11 +99,26 @@ World::World(std::string_view name)
         THORIN_R_OP(CODE)
     }
     { // MOp: [m: nat, w: nat] -> [m64 w, m64 w] -> m64 w
-        auto ty     = nom_pi(type())->set_dom({nat, nat});
-        auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
-        auto real_w = type_matrix(w);
-        ty->set_codom(pi({mem, real_w, real_w}, sigma({mem, real_w})));
-        THORIN_M_OP(CODE)
+        {
+            auto ty     = nom_pi(type())->set_dom({nat, nat});
+            auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
+            auto real_w = type_matrix(w);
+            ty->set_codom(pi({mem, real_w, real_w}, sigma({mem, real_w})));
+
+            CODE(MOp, add)
+            CODE(MOp, sub)
+            CODE(MOp, mul)
+        }
+        {
+            auto ty     = nom_pi(type())->set_dom({nat, nat});
+            auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
+            auto real_w = type_matrix(w);
+            ty->set_codom(pi({mem, type_real(64), type_matrix(w)}, sigma({mem, real_w})));
+
+            CODE(MOp, sadd)
+            CODE(MOp, smul)
+            CODE(MOp, ssub)
+        }
     }
     { // ICmp: w: nat -> [int w, int w] -> bool
         auto ty    = nom_pi(type())->set_dom(nat);

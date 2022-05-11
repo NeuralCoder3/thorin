@@ -5,6 +5,15 @@
 
 namespace thorin {
 
+struct ConstructResult{
+    const Def* rows;
+    const Def* cols;
+    const Def* result_matrix;
+    const Def* left_row_index;
+    const Def* right_col_index;
+    Lam* body;
+};
+
 class LowerMatrix : public RWPass<Lam> {
 public:
     LowerMatrix(PassMan& man)
@@ -13,7 +22,9 @@ public:
     void enter() override;
     const Def* rewrite_rec(const Def* current);
     const Def* rewrite_rec_convert(const Def* current);
-    const Lam* create_MOp_lam(u32 flags);
+    const Lam* create_MOp_lam(MOp mop);
+    void contruct(Lam* entry, const Def* a_rows, const Def* b_cols, ConstructResult& constructResult);
+
 
     const Def* currentMem;
     Lam* head = nullptr;
