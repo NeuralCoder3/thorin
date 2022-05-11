@@ -21,7 +21,39 @@ bool is_scalar(MOp mop){
     }
 }
 
-void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* cols, ConstructResult& constructResult){
+const Def* zero(World& w, const Def* type){
+    if(auto int_type = isa<Tag::Int>(type)){
+        return w.lit_int(int_type, (u64)0, {});
+    }else if(auto float_type = isa<Tag::Real>(type)){
+        return w.lit_real(as_lit(float_type->arg()), 0.0);
+    }
+
+    thorin::unreachable();
+}
+
+const Def* multiply(World& w, const Def* type, const Def* lhs, const Def* rhs){
+    if(auto int_type = isa<Tag::Int>(type)){
+        return w.op(Wrap::mul, (nat_t)0, lhs, rhs);
+    }else if(auto float_type = isa<Tag::Real>(type)){
+        return w.op(ROp::mul, (nat_t)0, lhs, rhs);
+    }
+
+    thorin::unreachable();
+}
+
+const Def* multiply_carry(World& w, const Def* type, const Def* lhs, const Def* rhs, const Def* carry){
+    auto result = multiply(w, type, lhs, rhs);
+
+    if(auto int_type = isa<Tag::Int>(type)){
+        return w.op(Wrap::add, (nat_t)0, result, carry);
+    }else if(auto float_type = isa<Tag::Real>(type)){
+        return w.op(ROp::add, (nat_t)0, result, carry);
+    }
+
+    thorin::unreachable();
+}
+
+void LowerMatrix::construct_mop(Lam* entry, const Def* elem_type, MOp mop, const Def* cols, ConstructResult& constructResult){
     World& w = world();
 
     auto [result_rows, result_cols, result_ptr] = constructResult.result_matrix->projs<3>();
@@ -38,16 +70,16 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* cols, ConstructR
             auto [a_rows, a_cols, a_ptr] = a->projs<3>();
             auto [b_rows, b_cols, b_ptr] = b->projs<3>();
 
-            auto [left_col_loop, left_col_yield] = w.repeat(a_cols, {w.type_real(64)});
+            auto [left_col_loop, left_col_yield] = w.repeat(a_cols, {elem_type});
 
             auto left_col_loop_result = builder
                     .mem()
-                    .type_real(64)
+                    .add(elem_type)
                     .nom_filter_lam("left_row_loop_result");
 
             builder
                     .mem(body)
-                    .add(w.lit_real(0.0))
+                    .add(zero(w, elem_type))
                     .add(left_col_loop_result)
                     .app_body(body, left_col_loop);
 
@@ -65,7 +97,7 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* cols, ConstructR
             auto [left_load_mem, left_value] = w.op_load(left_col_yield->mem_var(), left_ptr)->projs<2>();
             auto [right_load_mem, right_value]  = w.op_load(left_load_mem, right_ptr)->projs<2>();
 
-            auto sum = w.op(ROp::add, (nat_t)0, w.op(ROp::mul, (nat_t)0, left_value, right_value), carry);
+            auto sum = multiply_carry(w, elem_type, left_value, right_value, carry);
 
             builder
                     .add(right_load_mem)
@@ -97,10 +129,8 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* cols, ConstructR
             auto [left_load_mem, left_value] = w.op_load(body->mem_var(), left_ptr)->projs<2>();
             auto [right_load_mem, right_value]  = w.op_load(left_load_mem, right_ptr)->projs<2>();
 
-            auto result = w.op(rop, (nat_t)0, left_value, right_value);
-
+            auto result = multiply(w, elem_type, left_value, right_value);
             auto result_lea = w.op_lea(result_ptr, index);
-
             auto store_mem = w.op_store(right_load_mem, result_lea, result);
 
             builder.add(store_mem).app_body(body, body->ret_var());
@@ -134,7 +164,7 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* cols, ConstructR
             auto index = w.row_col_to_index(left_row_index, right_col_index, cols);
             auto right_ptr = w.op_lea(b_ptr, index);
             auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), right_ptr)->projs<2>();
-            auto result = w.op(rop, (nat_t)0, a, right_value);
+            auto result = multiply(w, elem_type, a, right_value);
             auto result_lea = w.op_lea(result_ptr, index);
             auto store_mem = w.op_store(right_load_mem, result_lea, result);
 
@@ -145,8 +175,8 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* cols, ConstructR
     }
 }
 
-void LowerMatrix::construct_loop(Lam* entry, const Def* a_rows, const Def* b_cols, ConstructResult& constructResult){
-    auto [alloc_mem, result_matrix] = world().op_create_matrix(world().type_real(64), a_rows, b_cols, entry->mem_var())->projs<2>();
+void LowerMatrix::construct_loop(Lam* entry, const Def* elem_type,  const Def* a_rows, const Def* b_cols, ConstructResult& constructResult){
+    auto [alloc_mem, result_matrix] = world().op_create_matrix(elem_type, a_rows, b_cols, entry->mem_var())->projs<2>();
 
     auto [left_row2_loop, left_row2_yield] = world().repeat(a_rows);
     auto left_row2_loop_result = builder.mem().nom_filter_lam("left_row2_loop_result");
@@ -229,8 +259,8 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
         cols = b_cols;
     }
 
-    construct_loop(entry, rows, cols, constructResult);
-    construct_mop(entry, mop, cols, constructResult);
+    construct_loop(entry, elem_type, rows, cols, constructResult);
+    construct_mop(entry, elem_type, mop, cols, constructResult);
 
     mop_variants[signature] = entry;
     return entry;

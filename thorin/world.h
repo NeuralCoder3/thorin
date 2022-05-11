@@ -465,8 +465,11 @@ public:
         auto elem_ty = arr_ty->as<Arr>()->body();
         return elem_ty;
     }
-    const Def* op(MOp o, const Def* rmode, const Def* a, const Def* b, const Def* mem, const Def* dbg = {}) {
+    const Def* op(MOp o, const Def* rmode, const Def* a, const Def* b, const Def* mem, const Def* dbg ) {
         return app(fn(o, rmode, elem_ty_of_matrix(b)), {mem, a, b}, dbg);
+    }
+    const Def* op(MOp o, const Def* rmode, const Def* a, const Def* mem, const Def* dbg) {
+        return app(fn(o, rmode, elem_ty_of_matrix(a)), {mem, a}, dbg);
     }
     const Def* op(Shr o, const Def* a, const Def* b, const Def* dbg = {}) { return app(fn(o, infer(a)), {a, b}, dbg); }
     const Def* op(Wrap o, const Def* wmode, const Def* a, const Def* b, const Def* dbg = {}) {
@@ -560,7 +563,7 @@ public:
     DefArray flatten(const DefArray& defs) {
         std::vector<const Def*> v;
         for( auto def : defs) {
-            if(auto tup = def->type()->isa<Sigma>()) {
+            if(def->type()->isa<Sigma>()) {
                 auto dim = def->num_projs();
                 for (size_t j = 0; j < dim; j++) {
                     v.push_back(def->proj(j));
@@ -686,8 +689,6 @@ public:
         }
 
         void app_body(Lam* body, const Def* callee){
-            callee->type()->dump();
-            world.tuple(v)->type()->dump();
             body->set_body(world.app(callee, {v}));
         }
 

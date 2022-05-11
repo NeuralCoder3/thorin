@@ -78,7 +78,7 @@ enum RMode : nat_t {
 /// Floating point (real) operations that take @p RMode.
 #define THORIN_R_OP(m) m(ROp, add) m(ROp, sub) m(ROp, mul) m(ROp, div) m(ROp, rem)
 /// MATRIX floating point (real) operations that take @p RMode.
-#define THORIN_M_OP(m) m(MOp, mul) m(MOp, add) m(MOp, sub) m(MOp, smul) m(MOp, sadd) m(MOp, ssub)
+#define THORIN_M_OP(m) m(MOp, mul) m(MOp, add) m(MOp, sub) m(MOp, smul) m(MOp, sadd) m(MOp, ssub) m(MOp, sum)
 /// Type traits
 #define THORIN_TRAIT(m) m(Trait, size) m(Trait, align)
 /// Conversions
