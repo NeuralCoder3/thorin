@@ -22,7 +22,7 @@ public:
     void enter() override;
     const Def* rewrite_rec(const Def* current);
     const Def* rewrite_rec_convert(const Def* current);
-    const Lam* create_MOp_lam(MOp mop);
+    const Lam* create_MOp_lam(MOp mop, const Def* elem_type);
     void contruct(Lam* entry, const Def* a_rows, const Def* b_cols, ConstructResult& constructResult);
 
 

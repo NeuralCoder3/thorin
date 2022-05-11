@@ -100,7 +100,7 @@ World::World(std::string_view name)
     }
     { // MOp: [m: nat, w: nat] -> [m64 w, m64 w] -> m64 w
         {
-            auto ty     = nom_pi(type())->set_dom({nat, nat});
+            auto ty     = nom_pi(type())->set_dom({nat, type()});
             auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
             auto real_w = type_matrix(w);
             ty->set_codom(pi({mem, real_w, real_w}, sigma({mem, real_w})));
@@ -110,10 +110,10 @@ World::World(std::string_view name)
             CODE(MOp, mul)
         }
         {
-            auto ty     = nom_pi(type())->set_dom({nat, nat});
+            auto ty     = nom_pi(type())->set_dom({nat, type()});
             auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
             auto real_w = type_matrix(w);
-            ty->set_codom(pi({mem, type_real(64), type_matrix(w)}, sigma({mem, real_w})));
+            ty->set_codom(pi({mem, w, type_matrix(w)}, sigma({mem, real_w})));
 
             CODE(MOp, sadd)
             CODE(MOp, smul)
@@ -484,11 +484,11 @@ const Def* World::raw_app(const Def* callee, const Def* arg, const Def* dbg) {
     return unify<App>(2, axiom, curry - 1, type, callee, arg, dbg);
 }
 
-const Def* World::type_matrix(const Def* width){
+const Def* World::type_matrix(const Def* elem_type){
     return sigma({
         type_int_width(64),
         type_int_width(64),
-        type_ptr(arr(top(type_nat()), type_real(width)))
+        type_ptr(arr(top(type_nat()), elem_type))
     });
 }
 

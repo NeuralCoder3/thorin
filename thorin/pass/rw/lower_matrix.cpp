@@ -24,7 +24,6 @@ bool has_scalar(MOp mop){
 void LowerMatrix::contruct(Lam* entry, const Def* a_rows, const Def* b_cols, ConstructResult& constructResult){
     auto [alloc_mem, result_matrix] = world().op_create_matrix(world().type_real(64), a_rows, b_cols, entry->mem_var())->projs<2>();
 
-
     auto [left_row2_loop, left_row2_yield] = world().repeat(a_rows);
     auto left_row2_loop_result = builder.mem().nom_filter_lam("left_row2_loop_result");
 
@@ -59,7 +58,7 @@ void LowerMatrix::contruct(Lam* entry, const Def* a_rows, const Def* b_cols, Con
     };
 }
 
-const Lam* LowerMatrix::create_MOp_lam(MOp mop){
+const Lam* LowerMatrix::create_MOp_lam(MOp mop, const Def* elem_type){
     World& w = world();
 
     ConstructResult constructResult;
@@ -67,10 +66,10 @@ const Lam* LowerMatrix::create_MOp_lam(MOp mop){
     if(has_scalar(mop)){
         entry = builder
                 .mem()
-                .type_real(64)
-                .type_matrix(64)
+                .add(elem_type)
+                .type_matrix(elem_type)
                 .add(
-                    builder.mem().type_matrix(64).cn()
+                    builder.mem().type_matrix(elem_type).cn()
                 ).nom_filter_lam("matrix_mul_entry");
 
         auto a = entry->var(1);
@@ -82,10 +81,10 @@ const Lam* LowerMatrix::create_MOp_lam(MOp mop){
     }else{
         entry = builder
                 .mem()
-                .type_matrix(64)
-                .type_matrix(64)
+                .type_matrix(elem_type)
+                .type_matrix(elem_type)
                 .add(
-                        builder.mem().type_matrix(64).cn()
+                    builder.mem().type_matrix(elem_type).cn()
                 ).nom_filter_lam("matrix_mul_entry");
 
         auto a = entry->var(1);
@@ -258,11 +257,9 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         currentMem = enter->mem_var();
         auto arg_wrap = rewrite_rec(arg);
 
-
-
-        //auto wrap_Mop = as<Tag::MOp>(world().app(mop->callee(), arg_wrap ));
-        auto mop_lam = create_MOp_lam(MOp(mop.flags()));
-        auto result_lam = builder.mem().type_matrix(64).nom_filter_lam("mat_mul_res");
+        auto elem_type = world().elem_ty_of_matrix(arg_wrap->op(2));
+        auto mop_lam = create_MOp_lam(MOp(mop.flags()), elem_type);
+        auto result_lam = builder.mem().type_matrix(elem_type).nom_filter_lam("mat_mul_res");
         //assert(arg_wrap->proj(0) == currentMem);
         builder.flatten(arg_wrap).add(result_lam).app_body(enter, mop_lam);
 

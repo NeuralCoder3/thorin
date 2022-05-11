@@ -365,7 +365,6 @@ public:
     const Axiom* type_real() { return data_.type_real_; }
     const Axiom* type_ptr() { return data_.type_ptr_; }
     const App* type_bool() { return data_.type_bool_; }
-    const Def* type_matrix(nat_t width) { return type_matrix(lit_nat(width));};
     const Def* type_matrix(const Def* width);
     const App* type_int_width(nat_t width) { return type_int(lit_nat(width2mod(width))); }
     const App* type_int(nat_t mod) { return type_int(lit_nat(mod)); }
@@ -459,8 +458,15 @@ public:
     const Def* op(ROp o, const Def* rmode, const Def* a, const Def* b, const Def* dbg = {}) {
         return app(fn(o, rmode, infer(a)), {a, b}, dbg);
     }
+    const Def* elem_ty_of_matrix(const Def* matrix){
+        auto [rows, cols, arr] = matrix->type()->projs<3>();
+        auto ptr = as<Tag::Ptr>(arr);
+        auto [arr_ty,addr_space] = ptr->arg()->projs<2>();
+        auto elem_ty = arr_ty->as<Arr>()->body();
+        return elem_ty;
+    }
     const Def* op(MOp o, const Def* rmode, const Def* a, const Def* b, const Def* mem, const Def* dbg = {}) {
-        return app(fn(o, rmode, lit_nat(64)), {mem, a, b}, dbg);
+        return app(fn(o, rmode, elem_ty_of_matrix(b)), {mem, a, b}, dbg);
     }
     const Def* op(Shr o, const Def* a, const Def* b, const Def* dbg = {}) { return app(fn(o, infer(a)), {a, b}, dbg); }
     const Def* op(Wrap o, const Def* wmode, const Def* a, const Def* b, const Def* dbg = {}) {
@@ -613,7 +619,7 @@ public:
             return *this;
         }
 
-        Builder& type_matrix(nat_t width){
+        Builder& type_matrix(const Def* width){
             v.push_back(world.type_matrix(width));
             return *this;
         }
