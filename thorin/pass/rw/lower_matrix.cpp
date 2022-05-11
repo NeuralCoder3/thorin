@@ -31,26 +31,30 @@ const Def* zero(World& w, const Def* type){
     thorin::unreachable();
 }
 
-const Def* multiply(World& w, const Def* type, const Def* lhs, const Def* rhs){
+enum Op{
+    mul, add, sub
+};
+
+const Def* op(World& w, Op op, const Def* type, const Def* lhs, const Def* rhs){
     if(auto int_type = isa<Tag::Int>(type)){
-        return w.op(Wrap::mul, (nat_t)0, lhs, rhs);
+        switch (op) {
+            case add: return w.op(Wrap::add, (nat_t)0, lhs, rhs);
+            case sub: return w.op(Wrap::sub, (nat_t)0, lhs, rhs);
+            case mul: return w.op(Wrap::mul, (nat_t)0, lhs, rhs);
+        }
     }else if(auto float_type = isa<Tag::Real>(type)){
-        return w.op(ROp::mul, (nat_t)0, lhs, rhs);
+        switch (op) {
+            case add: return w.op(ROp::add, (nat_t)0, lhs, rhs);
+            case sub: return w.op(ROp::sub, (nat_t)0, lhs, rhs);
+            case mul: return w.op(ROp::mul, (nat_t)0, lhs, rhs);
+        }
     }
 
     thorin::unreachable();
 }
 
-const Def* multiply_carry(World& w, const Def* type, const Def* lhs, const Def* rhs, const Def* carry){
-    auto result = multiply(w, type, lhs, rhs);
-
-    if(auto int_type = isa<Tag::Int>(type)){
-        return w.op(Wrap::add, (nat_t)0, result, carry);
-    }else if(auto float_type = isa<Tag::Real>(type)){
-        return w.op(ROp::add, (nat_t)0, result, carry);
-    }
-
-    thorin::unreachable();
+const Def* mul_add(World& w, const Def* type, const Def* lhs, const Def* rhs, const Def* carry){
+    return op(w, Op::add, type, op(w, Op::mul, type, lhs, rhs), carry);
 }
 
 void LowerMatrix::construct_mop(Lam* entry, const Def* elem_type, MOp mop, const Def* cols, ConstructResult& constructResult){
@@ -61,14 +65,14 @@ void LowerMatrix::construct_mop(Lam* entry, const Def* elem_type, MOp mop, const
     auto right_col_index = constructResult.right_col_index;
     auto body = constructResult.body;
 
+    auto a = entry->var(1);
+    auto b = entry->var(2);
+    auto [b_rows, b_cols, b_ptr] = b->projs<3>();
+
     switch (mop) {
         case MOp::mul: {
 
-            auto a = entry->var(1);
-            auto b = entry->var(2);
-
             auto [a_rows, a_cols, a_ptr] = a->projs<3>();
-            auto [b_rows, b_cols, b_ptr] = b->projs<3>();
 
             auto [left_col_loop, left_col_yield] = w.repeat(a_cols, {elem_type});
 
@@ -97,7 +101,7 @@ void LowerMatrix::construct_mop(Lam* entry, const Def* elem_type, MOp mop, const
             auto [left_load_mem, left_value] = w.op_load(left_col_yield->mem_var(), left_ptr)->projs<2>();
             auto [right_load_mem, right_value]  = w.op_load(left_load_mem, right_ptr)->projs<2>();
 
-            auto sum = multiply_carry(w, elem_type, left_value, right_value, carry);
+            auto sum = mul_add(w, elem_type, left_value, right_value, carry);
 
             builder
                     .add(right_load_mem)
@@ -113,13 +117,9 @@ void LowerMatrix::construct_mop(Lam* entry, const Def* elem_type, MOp mop, const
         }
         case MOp::add:
         case MOp::sub: {
-            auto rop = mop == MOp::add ? ROp::add : ROp::sub;
-
-            auto a = entry->var(1);
-            auto b = entry->var(2);
+            auto op_ty = mop == MOp::add ? Op::add : Op::sub;
 
             auto [a_rows, a_cols, a_ptr] = a->projs<3>();
-            auto [b_rows, b_cols, b_ptr] = b->projs<3>();
 
             auto index = w.row_col_to_index(left_row_index, right_col_index, cols);
 
@@ -129,7 +129,7 @@ void LowerMatrix::construct_mop(Lam* entry, const Def* elem_type, MOp mop, const
             auto [left_load_mem, left_value] = w.op_load(body->mem_var(), left_ptr)->projs<2>();
             auto [right_load_mem, right_value]  = w.op_load(left_load_mem, right_ptr)->projs<2>();
 
-            auto result = multiply(w, elem_type, left_value, right_value);
+            auto result = op(w, op_ty, elem_type, left_value, right_value);
             auto result_lea = w.op_lea(result_ptr, index);
             auto store_mem = w.op_store(right_load_mem, result_lea, result);
 
@@ -139,32 +139,28 @@ void LowerMatrix::construct_mop(Lam* entry, const Def* elem_type, MOp mop, const
         case MOp::sadd:
         case MOp::smul:
         case MOp::ssub: {
-            ROp rop;
+            Op op_ty;
             switch (mop) {
                 case MOp::sadd: {
-                    rop = ROp::add;
+                    op_ty = Op::add;
                     break;
                 }
                 case MOp::smul: {
-                    rop = ROp::mul;
+                    op_ty = Op::mul;
                     break;
                 }
                 case MOp::ssub: {
-                    rop = ROp::sub;
+                    op_ty = Op::sub;
                     break;
                 }
                 default:
                     thorin::unreachable();
             }
 
-            const Def* a = entry->var(1);
-            const Def* b = entry->var(2);
-
-            auto [b_rows, b_cols, b_ptr] = b->projs<3>();
             auto index = w.row_col_to_index(left_row_index, right_col_index, cols);
             auto right_ptr = w.op_lea(b_ptr, index);
             auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), right_ptr)->projs<2>();
-            auto result = multiply(w, elem_type, a, right_value);
+            auto result = op(w, op_ty, elem_type, a, right_value);
             auto result_lea = w.op_lea(result_ptr, index);
             auto store_mem = w.op_store(right_load_mem, result_lea, result);
 
