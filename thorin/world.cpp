@@ -98,6 +98,13 @@ World::World(std::string_view name)
         ty->set_codom(pi({real_w, real_w}, real_w));
         THORIN_R_OP(CODE)
     }
+    { // MOp: [m: nat, w: nat] -> [m64 w, m64 w] -> m64 w
+        auto ty     = nom_pi(type())->set_dom({nat, nat});
+        auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
+        auto real_w = type_matrix(w);
+        ty->set_codom(pi({mem, real_w, real_w}, sigma({mem, real_w})));
+        THORIN_M_OP(CODE)
+    }
     { // ICmp: w: nat -> [int w, int w] -> bool
         auto ty    = nom_pi(type())->set_dom(nat);
         auto int_w = type_int(ty->var(dbg("w")));
@@ -460,6 +467,14 @@ const Def* World::raw_app(const Def* callee, const Def* arg, const Def* dbg) {
     auto type           = pi->reduce(arg).back();
     auto [axiom, curry] = Axiom::get(callee);
     return unify<App>(2, axiom, curry - 1, type, callee, arg, dbg);
+}
+
+const Def* World::type_matrix(const Def* width){
+    return sigma({
+        type_int_width(64),
+        type_int_width(64),
+        type_ptr(arr(top(type_nat()), type_real(width)))
+    });
 }
 
 const Def* World::sigma(Defs ops, const Def* dbg) {
@@ -1130,6 +1145,21 @@ const Def* World::params_without_return_continuation(const Pi* pi) {
     return sigma(pi->dom()->ops().skip_front().skip_back());
 }
 
+const Def* World::op_create_matrix(const Def* elem_type, const Def* row_size, const Def* col_size, const Def* mem){
+    row_size = op(Conv::u2u, type_int_width(64), row_size);
+    col_size = op(Conv::u2u, type_int_width(64), col_size);
+    auto arr_size = op(Wrap::mul, (nat_t)0, row_size, col_size);
+
+    auto arr_size_nat = op_bitcast(type_nat(), arr_size);
+    auto arr_sized_ty = arr(arr_size_nat, elem_type)->as<Arr>();
+    auto arr_unknown_size_ty = arr(top_nat(), elem_type)->as<Arr>();
+    auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
+    auto [gradient_mem, gradient_arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
+    gradient_arr = op_bitcast(ptr_unknows_size, gradient_arr);
+
+    return tuple({gradient_mem, tuple({row_size, col_size, gradient_arr})});
+}
+
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg){
     if (auto pi = fn->type()->isa<Pi>()) {
         assert(pi->is_cn());
@@ -1211,6 +1241,7 @@ const Def* World::op_rev_diff(const Def* fn, const Def* dbg){
         auto pullback = app(mk_pullback, fn, dbg);
         // s2.fmt("pb {}\n",pullback);
 
+        pullback->type()->dump();
         return pullback;
     }
 

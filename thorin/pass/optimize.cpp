@@ -15,6 +15,7 @@
 #include "thorin/pass/rw/ret_wrap.h"
 #include "thorin/pass/rw/scalarize.h"
 #include "thorin/pass/rw/peephole.h"
+#include "thorin/pass/rw/lower_matrix.h"
 
 // old stuff
 // #include "thorin/transform/cleanup_world.h"
@@ -41,9 +42,12 @@ void optimize(World& world) {
 
     world.set_log_level(LogLevel::Debug);
 
+    /*
     PassMan pre_auto_opt(world);
     pre_auto_opt.add<PartialEval>();
-    pre_auto_opt.run();
+    pre_auto_opt.run();*/
+
+    PassMan::run<LowerMatrix>(world);
 
 
 //    std::unique_ptr<ErrorHandler> err;

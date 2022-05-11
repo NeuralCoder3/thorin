@@ -18,6 +18,7 @@ template<Shr  > const Def* normalize_Shr  (const Def*, const Def*, const Def*, c
 template<Wrap > const Def* normalize_Wrap (const Def*, const Def*, const Def*, const Def*);
 template<Div  > const Def* normalize_Div  (const Def*, const Def*, const Def*, const Def*);
 template<ROp  > const Def* normalize_ROp  (const Def*, const Def*, const Def*, const Def*);
+template<MOp  > const Def* normalize_MOp  (const Def*, const Def*, const Def*, const Def*);
 template<ICmp > const Def* normalize_ICmp (const Def*, const Def*, const Def*, const Def*);
 template<RCmp > const Def* normalize_RCmp (const Def*, const Def*, const Def*, const Def*);
 template<Trait> const Def* normalize_Trait(const Def*, const Def*, const Def*, const Def*);

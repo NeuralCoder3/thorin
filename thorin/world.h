@@ -365,6 +365,8 @@ public:
     const Axiom* type_real() { return data_.type_real_; }
     const Axiom* type_ptr() { return data_.type_ptr_; }
     const App* type_bool() { return data_.type_bool_; }
+    const Def* type_matrix(nat_t width) { return type_matrix(lit_nat(width));};
+    const Def* type_matrix(const Def* width);
     const App* type_int_width(nat_t width) { return type_int(lit_nat(width2mod(width))); }
     const App* type_int(nat_t mod) { return type_int(lit_nat(mod)); }
     const App* type_real(nat_t width) { return type_real(lit_nat(width)); }
@@ -389,6 +391,7 @@ public:
     const Axiom* ax(PE    o)  const { return data_.PE_   [size_t(o)]; }
     const Axiom* ax(RCmp  o)  const { return data_.RCmp_ [size_t(o)]; }
     const Axiom* ax(ROp   o)  const { return data_.ROp_  [size_t(o)]; }
+    const Axiom* ax(MOp   o)  const { return data_.MOp_  [size_t(o)]; }
     const Axiom* ax(Shr   o)  const { return data_.Shr_  [size_t(o)]; }
     const Axiom* ax(Trait o)  const { return data_.Trait_[size_t(o)]; }
     const Axiom* ax(Wrap  o)  const { return data_.Wrap_ [size_t(o)]; }
@@ -419,6 +422,9 @@ public:
         return app(ax(o), {rmode, width}, dbg);
     }
     const Def* fn(ROp o, const Def* rmode, const Def* width, const Def* dbg = {}) {
+        return app(ax(o), {rmode, width}, dbg);
+    }
+    const Def* fn(MOp o, const Def* rmode, const Def* width, const Def* dbg = {}) {
         return app(ax(o), {rmode, width}, dbg);
     }
     const Def* fn(Shr o, const Def* mod, const Def* dbg = {}) { return app(ax(o), mod, dbg); }
@@ -453,6 +459,9 @@ public:
     const Def* op(ROp o, const Def* rmode, const Def* a, const Def* b, const Def* dbg = {}) {
         return app(fn(o, rmode, infer(a)), {a, b}, dbg);
     }
+    const Def* op(MOp o, const Def* rmode, const Def* a, const Def* b, const Def* mem, const Def* dbg = {}) {
+        return app(fn(o, rmode, lit_nat(64)), {mem, a, b}, dbg);
+    }
     const Def* op(Shr o, const Def* a, const Def* b, const Def* dbg = {}) { return app(fn(o, infer(a)), {a, b}, dbg); }
     const Def* op(Wrap o, const Def* wmode, const Def* a, const Def* b, const Def* dbg = {}) {
         return app(fn(o, wmode, infer(a)), {a, b}, dbg);
@@ -481,6 +490,7 @@ public:
         auto safe_int = type_int(as<Tag::Ptr>(ptr->type())->arg(0)->arity());
         return op_lea(ptr, op(Conv::u2u, safe_int, i), dbg);
     }
+
     const Def* op_remem(const Def* mem, const Def* dbg = {}) { return app(ax_remem(), mem, dbg); }
     const Def* op_load(const Def* mem, const Def* ptr, const Def* dbg = {}) {
         auto [T, a] = as<Tag::Ptr>(ptr->type())->args<2>();
@@ -525,7 +535,231 @@ public:
     //@{
     const Def* params_without_return_continuation(const Pi* pi);
     const Def* op_rev_diff(const Def* fn, const Def* dbg = {});
+    const Def* op_create_matrix(const Def* elem_type, const Def* row_size, const Def* col_size, const Def* mem);
+    const Def* row_col_to_index( const Def* row, const Def* col, const Def* col_size){
+        return op(Wrap::add, (nat_t)0, col, op(Wrap::mul, (nat_t)0, row, col_size));
+    }
     const Def* tangent_type(const Def* A, bool left=false);
+
+    DefArray vars_without_mem_cont(Lam* lam) {
+        std::vector<const Def*> v;
+        for( auto def : lam->vars()) {
+            if(!isa<Tag::Mem>(def) && !def->isa<Pi>()) {
+                v.push_back(def);
+            }
+        }
+        return {v};
+    }
+
+    DefArray flatten(const DefArray& defs) {
+        std::vector<const Def*> v;
+        for( auto def : defs) {
+            if(auto tup = def->type()->isa<Sigma>()) {
+                auto dim = def->num_projs();
+                for (size_t j = 0; j < dim; j++) {
+                    v.push_back(def->proj(j));
+                }
+            }else {
+                v.push_back(def);
+            }
+        }
+        return {v};
+    }
+
+    class Builder{
+        std::vector<const Def*> v;
+        World& world;
+    public:
+
+        Builder(World& world) : world(world){
+
+        }
+
+        Builder& mem(){
+            v.push_back(world.type_mem());
+            return *this;
+        }
+
+        Builder& mem(Lam* lam){
+            v.push_back(lam->mem_var());
+            return *this;
+        }
+
+        Builder& add(const Def* def){
+            v.push_back(def);
+            return *this;
+        }
+
+        Builder& flatten(const Def* def){
+            nat_t size = def->num_projs();
+            for(nat_t i = 0; i < size ; i++ ){
+                v.push_back(def->proj(i));
+            }
+            return *this;
+        }
+
+        Builder& popBack(){
+            v.pop_back();
+            return *this;
+        }
+
+        Builder& lit_int(nat_t width, u64 value){
+            v.push_back(world.lit_int_width(width, value));
+            return *this;
+        }
+
+        Builder& lit_double( r64 value){
+            v.push_back(world.lit_real(64, value));
+            return *this;
+        }
+
+        Builder& type_matrix(nat_t width){
+            v.push_back(world.type_matrix(width));
+            return *this;
+        }
+
+        Builder& type_int_width(nat_t width){
+            v.push_back(world.type_int_width(width));
+            return *this;
+        }
+
+        Builder& type_real(nat_t width){
+            v.push_back(world.type_real(width));
+            return *this;
+        }
+
+        Builder& add(const DefArray& defs){
+            for( auto def : defs) {
+                v.push_back(def);
+            }
+            return *this;
+        }
+
+        Builder& vars_without_mem_cont(Lam* lam){
+            for( auto def : lam->vars()) {
+                auto type = def->type();
+                if(!isa<Tag::Mem>(type) && !type->isa<Pi>()) {
+                    v.push_back(def);
+                }
+            }
+            return *this;
+        }
+
+        Builder& vars_without_cont(Lam* lam){
+            for( auto def : lam->vars()) {
+                auto type = def->type();
+                if(!type->isa<Pi>()) {
+                    v.push_back(def);
+                }
+            }
+            return *this;
+        }
+
+        Builder& vars(Lam* lam){
+            for( auto def : lam->vars()) {
+                v.push_back(def);
+            }
+            return *this;
+        }
+
+        Builder& cn_mem(){
+            add(world.cn(world.type_mem()));
+            return *this;
+        }
+
+        const Pi* cn(){
+            return world.cn({v});
+        }
+
+        const Def* tuple(){
+            return world.tuple({v});
+        }
+
+        const Def* app(const Def* callee){
+            return world.app(callee, {v});
+        }
+
+        void app_body(Lam* body, const Def* callee){
+            callee->type()->dump();
+            world.tuple(v)->type()->dump();
+            body->set_body(world.app(callee, {v}));
+        }
+
+        Lam* nom_filter_lam(const std::string& name){
+            return world.nom_filter_lam( cn(), world.dbg(name) );
+        }
+
+        Lam* nom_lam(const std::string& name){
+            return world.nom_lam( cn(), world.dbg(name) );
+        }
+    };
+
+    Builder builder(){
+        return Builder(*this);
+    }
+
+    const Lam* repeat(const Def* count, const Lam* yield, Defs extra = {} ){
+        auto loop_entry = builder()
+                .mem()
+                .add(extra)
+                .add(builder().mem().add(extra).cn())
+                .nom_filter_lam("loop_entry");
+
+        auto loop_head = builder()
+                .mem()
+                .type_int_width(64)
+                .add(extra)
+                .nom_lam("loop_head");
+
+        auto loop = nom_filter_lam(cn(type_mem()),dbg("loop"));
+        auto loop_end = nom_filter_lam(cn(type_mem()),dbg("loop_exit"));
+        auto loop_continue = builder().mem().add(extra).nom_filter_lam("loop_continue");
+        auto cond = op(ICmp::ul,loop_head->var(1),count);
+
+        builder()
+            .mem(loop_entry)
+            .lit_int(64,0)
+            .vars_without_mem_cont(loop_entry)
+            .app_body(loop_entry, loop_head);
+
+        loop_head->branch(lit_false(),cond,loop,loop_end,loop_head->mem_var());
+
+        auto idx = loop_head->var(1);
+        auto inc = op(Wrap::add,lit_nat(0),lit_int_width(64,1),idx);
+
+        builder()
+            .mem(loop)
+            .vars_without_mem_cont(loop_head)
+            .add(loop_continue)
+            .app_body(loop, yield);
+
+        builder()
+            .mem(loop_continue)
+            .add(inc)
+            .vars_without_mem_cont(loop_continue)
+            .app_body(loop_continue, loop_head);
+
+        builder()
+            .mem(loop_end)
+            .add(loop_head->var()->projs().skip_front(2))
+            .app_body(loop_end, loop_entry->ret_var());
+
+        return loop_entry;
+    }
+
+    std::pair<const Lam*, Lam*> repeat(const Def* count, Defs extra = {}){
+        Lam* yield = builder()
+                .mem()
+                .type_int_width(64)
+                .add(extra)
+                .add(builder().mem().add(extra).cn())
+                .nom_filter_lam("yield");
+
+        const Lam* loop = repeat(count, yield, extra);
+        return {loop, yield};
+    }
+
+
     //@}
 
     /// @name helpers
@@ -779,6 +1013,7 @@ private:
         std::array<const Axiom*, Num<Wrap >> Wrap_;
         std::array<const Axiom*, Num<Div  >> Div_;
         std::array<const Axiom*, Num<ROp  >> ROp_;
+        std::array<const Axiom*, Num<MOp  >> MOp_;
         std::array<const Axiom*, Num<ICmp >> ICmp_;
         std::array<const Axiom*, Num<RCmp >> RCmp_;
         std::array<const Axiom*, Num<Trait>> Trait_;

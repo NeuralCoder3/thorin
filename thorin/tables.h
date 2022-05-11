@@ -33,6 +33,7 @@ using nat_t    = u64;
 #define THORIN_TAG(m)                                               \
     m(Mem, mem) m(Int, int) m(Real, real) m(Ptr, ptr)               \
     m(Bit, bit) m(Shr, shr) m(Wrap, wrap) m(Div, div) m(ROp, rop)   \
+    m(MOp, mop)                                                     \
     m(ICmp, icmp) m(RCmp, rcmp)                                     \
     m(Trait, trait) m(Conv, conv) m(PE, pe) m(Acc, acc)             \
     m(Bitcast, bitcast) m(LEA, lea)                                 \
@@ -76,6 +77,8 @@ enum RMode : nat_t {
 #define THORIN_DIV(m) m(Div, sdiv) m(Div, udiv) m(Div, srem) m(Div, urem)
 /// Floating point (real) operations that take @p RMode.
 #define THORIN_R_OP(m) m(ROp, add) m(ROp, sub) m(ROp, mul) m(ROp, div) m(ROp, rem)
+/// MATRIX floating point (real) operations that take @p RMode.
+#define THORIN_M_OP(m) m(MOp, mul) m(MOp, add) m(MOp, sub) m(MOp, conv)
 /// Type traits
 #define THORIN_TRAIT(m) m(Trait, size) m(Trait, align)
 /// Conversions
@@ -196,6 +199,7 @@ enum class Shr    : flags_t { THORIN_SHR  (CODE) };
 enum class Wrap   : flags_t { THORIN_WRAP (CODE) };
 enum class Div    : flags_t { THORIN_DIV  (CODE) };
 enum class ROp    : flags_t { THORIN_R_OP (CODE) };
+enum class MOp    : flags_t { THORIN_M_OP (CODE) };
 enum class ICmp   : flags_t { THORIN_I_CMP(CODE) };
 enum class RCmp   : flags_t { THORIN_R_CMP(CODE) };
 enum class Trait  : flags_t { THORIN_TRAIT(CODE) };
@@ -218,6 +222,7 @@ constexpr std::string_view op2str(Shr   o) { switch (o) { THORIN_SHR  (CODE) def
 constexpr std::string_view op2str(Wrap  o) { switch (o) { THORIN_WRAP (CODE) default: unreachable(); } }
 constexpr std::string_view op2str(Div   o) { switch (o) { THORIN_DIV  (CODE) default: unreachable(); } }
 constexpr std::string_view op2str(ROp   o) { switch (o) { THORIN_R_OP (CODE) default: unreachable(); } }
+constexpr std::string_view op2str(MOp   o) { switch (o) { THORIN_M_OP (CODE) default: unreachable(); } }
 constexpr std::string_view op2str(ICmp  o) { switch (o) { THORIN_I_CMP(CODE) default: unreachable(); } }
 constexpr std::string_view op2str(RCmp  o) { switch (o) { THORIN_R_CMP(CODE) default: unreachable(); } }
 constexpr std::string_view op2str(Trait o) { switch (o) { THORIN_TRAIT(CODE) default: unreachable(); } }
@@ -247,6 +252,7 @@ template<> inline constexpr size_t Num<Shr  > = 0_s THORIN_SHR  (CODE);
 template<> inline constexpr size_t Num<Wrap > = 0_s THORIN_WRAP (CODE);
 template<> inline constexpr size_t Num<Div  > = 0_s THORIN_DIV  (CODE);
 template<> inline constexpr size_t Num<ROp  > = 0_s THORIN_R_OP (CODE);
+template<> inline constexpr size_t Num<MOp  > = 0_s THORIN_M_OP (CODE);
 template<> inline constexpr size_t Num<ICmp > = 0_s THORIN_I_CMP(CODE);
 template<> inline constexpr size_t Num<RCmp > = 0_s THORIN_R_CMP(CODE);
 template<> inline constexpr size_t Num<Trait> = 0_s THORIN_TRAIT(CODE);

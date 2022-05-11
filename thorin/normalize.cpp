@@ -644,6 +644,15 @@ const Def* normalize_Div(const Def* type, const Def* c, const Def* arg, const De
     return world.raw_app(callee, {mem, a, b}, dbg);
 }
 
+template<MOp op>
+const Def* normalize_MOp(const Def* type, const Def* c, const Def* arg, const Def* dbg) {
+    auto& world = type->world();
+    auto callee = c->as<App>();
+    auto [mem, a, b] = arg->projs<3>();
+
+    return world.raw_app(callee, {mem, a, b}, dbg);
+}
+
 template<ROp op>
 const Def* normalize_ROp(const Def* type, const Def* c, const Def* arg, const Def* dbg) {
     auto& world = type->world();
@@ -1003,6 +1012,7 @@ THORIN_SHR  (CODE)
 THORIN_WRAP (CODE)
 THORIN_DIV  (CODE)
 THORIN_R_OP (CODE)
+THORIN_M_OP (CODE)
 THORIN_I_CMP(CODE)
 THORIN_R_CMP(CODE)
 THORIN_TRAIT(CODE)
