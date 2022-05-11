@@ -58,8 +58,14 @@ void LowerMatrix::contruct(Lam* entry, const Def* a_rows, const Def* b_cols, Con
     };
 }
 
-const Lam* LowerMatrix::create_MOp_lam(MOp mop, const Def* elem_type){
+const Lam* LowerMatrix::create_MOp_lam(const App* mopApp){
     World& w = world();
+
+    auto app = mopApp->callee()->as<App>();
+    auto elem_type = app->arg(1);
+    auto mop_axiom = app->callee()->as<Axiom>();
+
+    MOp mop = MOp(mop_axiom->flags());
 
     ConstructResult constructResult;
     Lam* entry;
@@ -253,12 +259,11 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         tail = enter;
         
         auto arg = mop->arg();
-
         currentMem = enter->mem_var();
         auto arg_wrap = rewrite_rec(arg);
 
         auto elem_type = world().elem_ty_of_matrix(arg_wrap->op(2));
-        auto mop_lam = create_MOp_lam(MOp(mop.flags()), elem_type);
+        auto mop_lam = create_MOp_lam(mop);//MOp(mop.flags()), elem_type);
         auto result_lam = builder.mem().type_matrix(elem_type).nom_filter_lam("mat_mul_res");
         //assert(arg_wrap->proj(0) == currentMem);
         builder.flatten(arg_wrap).add(result_lam).app_body(enter, mop_lam);
