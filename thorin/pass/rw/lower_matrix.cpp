@@ -210,7 +210,7 @@ void LowerMatrix::construct_loop(Lam* entry, const Def* elem_type,  const Def* a
 
 const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type, const Def* rmode){
     World& w = world();
-    auto signature = w.tuple({mop_axiom, elem_type});
+    auto signature = w.tuple({mop_axiom, elem_type, rmode});
 
     if(mop_variants.contains(signature)){
         return mop_variants[signature];
