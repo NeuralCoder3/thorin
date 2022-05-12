@@ -60,6 +60,10 @@ World::World(std::string_view name)
 
     auto mem = data_.type_mem_ = axiom(type(), Tag::Mem, 0, dbg("mem"));
 
+    { // mat: [T: *] -> *
+        data_.type_mat_ = axiom(nullptr, pi(type(), type()), Tag::Mat, 0, dbg("mat"));
+    }
+
     { // ptr: [T: *, as: nat] -> *
         data_.type_ptr_ = axiom(nullptr, pi({type(), nat}, type()), Tag::Ptr, 0, dbg("ptr"));
     }
@@ -102,7 +106,7 @@ World::World(std::string_view name)
         {
             auto ty     = nom_pi(type())->set_dom({nat, type()});
             auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
-            auto real_w = type_matrix(w);
+            auto real_w = type_mat(w);
             ty->set_codom(pi({mem, real_w, real_w}, sigma({mem, real_w})));
 
             CODE(MOp, add)
@@ -112,7 +116,7 @@ World::World(std::string_view name)
         {
             auto ty     = nom_pi(type())->set_dom({nat, type()});
             auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
-            auto real_w = type_matrix(w);
+            auto real_w = type_mat(w);
             ty->set_codom(pi({mem, w, real_w}, sigma({mem, real_w})));
 
             CODE(MOp, sadd)
@@ -122,7 +126,7 @@ World::World(std::string_view name)
         {
             auto ty     = nom_pi(type())->set_dom({nat, type()});
             auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
-            auto real_w = type_matrix(w);
+            auto real_w = type_mat(w);
             ty->set_codom(pi({mem, real_w}, sigma({mem, real_w})));
 
             CODE(MOp, sum)
@@ -239,6 +243,13 @@ World::World(std::string_view name)
         auto ptr     = type_ptr(T, as);
         ty->set_codom(pi({mem, nat}, sigma({mem, ptr})));
         data_.malloc_ = axiom(nullptr, ty, Tag::Malloc, 0, dbg("malloc"));
+    }
+    { // mat_alloc: [T: *, as: nat] -> [M, nat] -> [M, ptr(T, as)]
+        auto ty      = nom_pi(type())->set_dom({type(), nat});
+        auto [T, as] = ty->vars<2>({dbg("T"), dbg("as")});
+        auto mat     = type_mat(T);
+        ty->set_codom(pi({mem, nat, T}, sigma({mem, mat})));
+        data_.malloc_ = axiom(nullptr, ty, Tag::MatAlloc, 0, dbg("mat_malloc"));
     }
     { // mslot: [T: *, as: nat] -> [M, nat, nat] -> [M, ptr(T, as)]
         auto ty      = nom_pi(type())->set_dom({type(), nat});
@@ -437,14 +448,14 @@ const Def* World::raw_app(const Def* callee, const Def* arg, const Def* dbg) {
     auto [axiom, curry] = Axiom::get(callee);
     return unify<App>(2, axiom, curry - 1, type, callee, arg, dbg);
 }
-
+/*
 const Def* World::type_matrix(const Def* elem_type){
     return sigma({
         type_int_width(64),
         type_int_width(64),
         type_ptr(arr(top(type_nat()), elem_type))
     });
-}
+}*/
 
 const Def* World::sigma(Defs ops, const Def* dbg) {
     auto n = ops.size();
@@ -1055,7 +1066,7 @@ const Def* World::params_without_return_continuation(const Pi* pi) {
 const Def* World::op_create_matrix(const Def* elem_type, const Def* row_size, const Def* col_size, const Def* mem){
     row_size = op(Conv::u2u, type_int_width(64), row_size);
     col_size = op(Conv::u2u, type_int_width(64), col_size);
-    auto arr_size = op(Wrap::mul, (nat_t)0, row_size, col_size);
+    /*auto arr_size = op(Wrap::mul, (nat_t)0, row_size, col_size);
 
     auto arr_size_nat = op_bitcast(type_nat(), arr_size);
     auto arr_sized_ty = arr(arr_size_nat, elem_type)->as<Arr>();
@@ -1064,7 +1075,9 @@ const Def* World::op_create_matrix(const Def* elem_type, const Def* row_size, co
     auto [gradient_mem, gradient_arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
     gradient_arr = op_bitcast(ptr_unknows_size, gradient_arr);
 
-    return tuple({gradient_mem, tuple({row_size, col_size, gradient_arr})});
+    return tuple({gradient_mem, tuple({row_size, col_size, gradient_arr})});*/
+
+    return app(app(ax_mat_alloc(), {elem_type}), {mem, row_size, col_size}, dbg("mat_alloc"));
 }
 
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg){

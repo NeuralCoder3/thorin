@@ -249,6 +249,33 @@ std::ostream& operator<<(std::ostream& os, std::pair<const Def*, const Def*> p) 
 void Def::dump() const { std::cout << this << std::endl; }
 void Def::dump(size_t max) const { stream(std::cout, max) << std::endl; }
 
+void Def::dumpClass() const {
+   // == T::Node
+    std::string name;
+    switch (node()) {
+        case Lam::Node: name = "Lam"; break;
+        case Sigma::Node: name = "Sigma"; break;
+        case Tuple::Node: name = "Tuple"; break;
+        case Axiom::Node: name = "Axiom"; break;
+        case Var::Node: name = "Var"; break;
+        case Lit::Node: name = "Lit"; break;
+        case Nat::Node: name = "Nat"; break;
+        case Proxy::Node: name = "Proxy"; break;
+        case Infer::Node: name = "Infer"; break;
+        case Global::Node: name = "Global"; break;
+        case Pi::Node: name = "Pi"; break;
+        case App::Node: name = "App"; break;
+        case Et::Node: name = "Et"; break;
+        case Vel::Node: name = "Vel"; break;
+        case Arr::Node: name = "Arr"; break;
+        case Pack::Node: name = "Pack"; break;
+        case Insert::Node: name = "Insert"; break;
+        case Extract::Node: name = "Extract"; break;
+    }
+
+    std::cout << name << std::endl;
+}
+
 // TODO polish this
 std::ostream& operator<<(std::ostream& os, const World& world) {
     // auto old_gid = curr_gid();

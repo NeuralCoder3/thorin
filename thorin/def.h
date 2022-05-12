@@ -341,6 +341,7 @@ public:
     std::ostream& stream(std::ostream&, size_t max) const;
     std::ostream& let(std::ostream&, Tab&) const;
     void dump() const;
+    void dumpClass() const;
     void dump(size_t) const;
     ///@}
 

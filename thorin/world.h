@@ -364,8 +364,9 @@ public:
     const Axiom* type_int() { return data_.type_int_; }
     const Axiom* type_real() { return data_.type_real_; }
     const Axiom* type_ptr() { return data_.type_ptr_; }
+    const Axiom* type_mat() { return data_.type_mat_; }
     const App* type_bool() { return data_.type_bool_; }
-    const Def* type_matrix(const Def* width);
+    const Def* type_mat(const Def* elem_type) { return app(type_mat(), elem_type); }
     const App* type_int_width(nat_t width) { return type_int(lit_nat(width2mod(width))); }
     const App* type_int(nat_t mod) { return type_int(lit_nat(mod)); }
     const App* type_real(nat_t width) { return type_real(lit_nat(width)); }
@@ -382,30 +383,31 @@ public:
     /// @name bulitin axioms
     ///@{
     // clang-format off
-    const Axiom* ax(Acc   o)  const { return data_.Acc_  [size_t(o)]; }
-    const Axiom* ax(Bit   o)  const { return data_.Bit_  [size_t(o)]; }
-    const Axiom* ax(Conv  o)  const { return data_.Conv_ [size_t(o)]; }
-    const Axiom* ax(Div   o)  const { return data_.Div_  [size_t(o)]; }
-    const Axiom* ax(ICmp  o)  const { return data_.ICmp_ [size_t(o)]; }
-    const Axiom* ax(PE    o)  const { return data_.PE_   [size_t(o)]; }
-    const Axiom* ax(RCmp  o)  const { return data_.RCmp_ [size_t(o)]; }
-    const Axiom* ax(ROp   o)  const { return data_.ROp_  [size_t(o)]; }
-    const Axiom* ax(MOp   o)  const { return data_.MOp_  [size_t(o)]; }
-    const Axiom* ax(Shr   o)  const { return data_.Shr_  [size_t(o)]; }
-    const Axiom* ax(Trait o)  const { return data_.Trait_[size_t(o)]; }
-    const Axiom* ax(Wrap  o)  const { return data_.Wrap_ [size_t(o)]; }
-    const Axiom* ax_alloc()   const { return data_.alloc_;   }
-    const Axiom* ax_atomic()  const { return data_.atomic_;  }
-    const Axiom* ax_bitcast() const { return data_.bitcast_; }
-    const Axiom* ax_lea()     const { return data_.lea_;     }
-    const Axiom* ax_malloc()  const { return data_.malloc_;  }
-    const Axiom* ax_mslot()   const { return data_.mslot_;   }
-    const Axiom* ax_zip()     const { return data_.zip_;     }
-    const Axiom* ax_for()     const { return data_.for_;     }
-    const Axiom* ax_load()    const { return data_.load_;    }
-    const Axiom* ax_remem()   const { return data_.remem_;   }
-    const Axiom* ax_slot()    const { return data_.slot_;    }
-    const Axiom* ax_store()   const { return data_.store_;   }
+    const Axiom* ax(Acc   o)      const { return data_.Acc_  [size_t(o)]; }
+    const Axiom* ax(Bit   o)      const { return data_.Bit_  [size_t(o)]; }
+    const Axiom* ax(Conv  o)      const { return data_.Conv_ [size_t(o)]; }
+    const Axiom* ax(Div   o)      const { return data_.Div_  [size_t(o)]; }
+    const Axiom* ax(ICmp  o)      const { return data_.ICmp_ [size_t(o)]; }
+    const Axiom* ax(PE    o)      const { return data_.PE_   [size_t(o)]; }
+    const Axiom* ax(RCmp  o)      const { return data_.RCmp_ [size_t(o)]; }
+    const Axiom* ax(ROp   o)      const { return data_.ROp_  [size_t(o)]; }
+    const Axiom* ax(MOp   o)      const { return data_.MOp_  [size_t(o)]; }
+    const Axiom* ax(Shr   o)      const { return data_.Shr_  [size_t(o)]; }
+    const Axiom* ax(Trait o)      const { return data_.Trait_[size_t(o)]; }
+    const Axiom* ax(Wrap  o)      const { return data_.Wrap_ [size_t(o)]; }
+    const Axiom* ax_alloc()       const { return data_.alloc_;   }
+    const Axiom* ax_mat_alloc()   const { return data_.mat_alloc_;   }
+    const Axiom* ax_atomic()      const { return data_.atomic_;  }
+    const Axiom* ax_bitcast()     const { return data_.bitcast_; }
+    const Axiom* ax_lea()         const { return data_.lea_;     }
+    const Axiom* ax_malloc()      const { return data_.malloc_;  }
+    const Axiom* ax_mslot()       const { return data_.mslot_;   }
+    const Axiom* ax_zip()         const { return data_.zip_;     }
+    const Axiom* ax_for()         const { return data_.for_;     }
+    const Axiom* ax_load()        const { return data_.load_;    }
+    const Axiom* ax_remem()       const { return data_.remem_;   }
+    const Axiom* ax_slot()        const { return data_.slot_;    }
+    const Axiom* ax_store()       const { return data_.store_;   }
     // clang-format on
     ///@}
 
@@ -546,6 +548,9 @@ public:
     const Def* op_rev_diff(const Def* fn, const Def* dbg = {});
     const Def* op_create_matrix(const Def* elem_type, const Def* row_size, const Def* col_size, const Def* mem);
     const Def* row_col_to_index( const Def* row, const Def* col, const Def* col_size){
+        row = op(Conv::u2u, type_int_width(64), row);
+        col = op(Conv::u2u, type_int_width(64), col);
+
         return op(Wrap::add, (nat_t)0, col, op(Wrap::mul, (nat_t)0, row, col_size));
     }
     const Def* tangent_type(const Def* A, bool left=false);
@@ -622,8 +627,8 @@ public:
             return *this;
         }
 
-        Builder& type_matrix(const Def* width){
-            v.push_back(world.type_matrix(width));
+        Builder& type_matrix(const Def* elem_type){
+            v.push_back(world.type_mat(elem_type));
             return *this;
         }
 
@@ -1034,6 +1039,7 @@ private:
         const Lit* lit_univ_0_;
         const Lit* lit_univ_1_;
         const Axiom* alloc_;
+        const Axiom* mat_alloc_;
         const Axiom* atomic_;
         const Axiom* bitcast_;
         const Axiom* lea_;
@@ -1047,6 +1053,7 @@ private:
         const Axiom* type_mem_;
         const Axiom* type_ptr_;
         const Axiom* type_real_;
+        const Axiom* type_mat_;
         const Axiom* op_rev_diff_;
         const Axiom* zip_;
         const Axiom* for_;
