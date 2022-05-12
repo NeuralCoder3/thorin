@@ -50,14 +50,16 @@ const Def* op(World& w, Op op, const Def* rmode, const Def* type, const Def* lhs
         }
     }
 
+    type->dump();
+
     thorin::unreachable();
 }
 
-const Def* mul_add(World& w, const Def* type, const Def* rmode, const Def* lhs, const Def* rhs, const Def* carry){
+const Def* mul_add(World& w, const Def* rmode, const Def* type, const Def* lhs, const Def* rhs, const Def* carry){
     return op(w, Op::add, rmode, type, op(w, Op::mul, rmode, type, lhs, rhs), carry);
 }
 
-void LowerMatrix::construct_mop(Lam* entry, const Def* elem_type, MOp mop, const Def* rmode, const Def* cols, ConstructResult& constructResult){
+void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def* elem_type, const Def* cols, ConstructResult& constructResult){
     World& w = world();
 
     auto [result_rows, result_cols, result_ptr] = constructResult.result_matrix->projs<3>();
@@ -101,7 +103,7 @@ void LowerMatrix::construct_mop(Lam* entry, const Def* elem_type, MOp mop, const
             auto [left_load_mem, left_value] = w.op_load(left_col_yield->mem_var(), left_ptr)->projs<2>();
             auto [right_load_mem, right_value]  = w.op_load(left_load_mem, right_ptr)->projs<2>();
 
-            auto sum = mul_add(w, elem_type, rmode, left_value, right_value, carry);
+            auto sum = mul_add(w, rmode, elem_type, left_value, right_value, carry);
 
             builder
                     .add(right_load_mem)
@@ -256,7 +258,7 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
     }
 
     construct_loop(entry, elem_type, rows, cols, constructResult);
-    construct_mop(entry, elem_type, mop, rmode, cols, constructResult);
+    construct_mop(entry, mop, rmode, elem_type, cols, constructResult);
 
     mop_variants[signature] = entry;
     return entry;
