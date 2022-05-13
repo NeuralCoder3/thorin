@@ -454,8 +454,6 @@ const Def* derive_numeric_walk(World& world, const Def* ref, const Def* h, const
 
 std::pair<const Def*,const Def*> lit_of_type(World& world, const Def* mem, const Def* type, const Def* like, r64 lit, const Def* dummy) {
     // TODO: a monad would be easier for memory
-    if(like){
-    }
 
     auto isFatPtr = isFatPtrType(world,type);
     if(isFatPtr) {
@@ -476,6 +474,23 @@ std::pair<const Def*,const Def*> lit_of_type(World& world, const Def* mem, const
         auto mem4=world.op_store(mem3,ptr_arr,init);
         auto fat_ptr_arr = world.tuple({arr_size,ptr_arr});
         return {mem4,fat_ptr_arr};
+    }
+
+    if( auto mat = isa<Tag::Mat>(type) ){
+        auto elem_type = mat->arg(0);
+        auto rows = world.extract(like, (u64) 0);
+        auto cols = world.extract(like, (u64) 1);
+
+        auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, rows, cols, mem)->projs<2>();
+
+        auto ptr = world.extract(new_mat, (u64) 2);
+
+        auto size_nat = world.op_bitcast(world.type_nat(), world.op(Wrap::mul, RMode::none, rows, cols));
+        auto [result_mem, body_lit] = lit_of_type(world,alloc_mem, elem_type, nullptr, lit,dummy);
+        auto init = world.pack(size_nat, body_lit);
+        auto store_mem = world.op_store(result_mem, ptr, init);
+
+        return {store_mem, new_mat};
     }
 
     // TODO: not for idef array
@@ -803,7 +818,9 @@ const Def* AutoDiffer::extract_pb(const Def* j_extract, const Def* tuple) {
     if(auto lit = idx->isa<Lit>()) {
         // would save from tuples
         // but can not occur as partial evaluation removes such projections
-        auto isMemTuple=isa<Tag::Mem>(tuple->type()->proj(0));
+
+        auto tuple_type = tuple->type();
+
         auto pb_domain=tuple_pb->type()->as<Pi>()->dom();//as<Sigma>();
         int index_lit = lit->get<uint8_t>();
 
@@ -1381,6 +1398,20 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         // we can not move the shadow slot & its store into the pb (same reason as for ptr)
         auto ptr_ty = as<Tag::Ptr>(lea->type());
         auto [ty,addr_space] = ptr_ty->arg()->projs<2>();
+        auto [src_ptr, ignore] = lea->arg()->projs<2>();
+        if(auto extract = src_ptr->isa<Extract>()){
+            extract->tuple()->dump();
+            extract->tuple()->type()->dump();
+            extract->tuple()->dumpClass();
+            auto value = extract->tuple();
+            if(auto mat = isa<Tag::Mat>(value->type())){
+                mat->dump();
+            }
+        }
+
+        world_.mat()
+
+
         auto fat_ptr=j_wrap(lea->arg(0));
         auto [arr_size,arr] = fat_ptr->projs<2>();
         auto idx = j_wrap(lea->arg(1)); // not necessary
@@ -1706,6 +1737,12 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         return j_wrap_tuple(tup);
     }
 
+    if(auto mat = def->isa<Mat>()){
+        mat->dump();
+        mat->type()->dump();
+        mat->type()->dump();
+    }
+
     if (auto extract = def->isa<Extract>()) {
         // extracting a tuple B^m results in element B
         // the tuple has a pullback B^m->A (remember the tuple is viewed as function in the inputs)
@@ -1718,10 +1755,11 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         // this extracted one-hot vector can now be used to be applied to the pullback of the tuple
         // to project the correct gradient
         // when extracting a component, the pullback is extracted from the tuple pullback of the tuple argument
+
         auto jeidx= j_wrap(extract->index());
         auto jtup = j_wrap(extract->tuple());
         auto dst = world_.extract_unsafe(jtup, jeidx,extract->dbg());
-        if(!isa<Tag::Mem>(dst->type())) {
+        if(!isa<Tag::Mem>(dst->type()) && !isa<Tag::Mat>(jtup->type())) {
             pullbacks_[dst] = extract_pb(dst,jtup);
         }
         return dst;

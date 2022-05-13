@@ -465,18 +465,32 @@ public:
     const Def* op(ROp o, const Def* rmode, const Def* a, const Def* b, const Def* dbg = {}) {
         return app(fn(o, rmode, infer(a)), {a, b}, dbg);
     }
-    const Def* elem_ty_of_matrix(const Def* matrix){
-        if(auto mat_type = isa<Tag::Mat>(matrix->type())){
+    const Def* elem_ty_of_mat(const Def* matrix){
+        if(auto mat_type = isa<Tag::Mat>(matrix)){
             return mat_type->arg(2);
         }
 
         thorin::unreachable();
     }
+
+    const Def* type_mat_tuple(const Def* mat){
+        if (auto mat_type = isa<Tag::Mat>(mat)) {
+            auto elem_type = elem_ty_of_mat(mat_type);
+            return sigma({
+                 type_int_width(64),
+                 type_int_width(64),
+                 type_ptr(arr(top_nat(), elem_type)),
+             });
+        }
+
+        thorin::unreachable();
+    }
+
     const Def* op(MOp o, const Def* rmode, const Def* a, const Def* b, const Def* mem, const Def* dbg ) {
-        return app(fn(o, rmode, elem_ty_of_matrix(b)), {mem, a, b}, dbg);
+        return app(fn(o, rmode, elem_ty_of_mat(b->type())), {mem, a, b}, dbg);
     }
     const Def* op(MOp o, const Def* rmode, const Def* a, const Def* mem, const Def* dbg) {
-        return app(fn(o, rmode, elem_ty_of_matrix(a)), {mem, a}, dbg);
+        return app(fn(o, rmode, elem_ty_of_mat(a->type())), {mem, a}, dbg);
     }
     const Def* op(Shr o, const Def* a, const Def* b, const Def* dbg = {}) { return app(fn(o, infer(a)), {a, b}, dbg); }
     const Def* op(Wrap o, const Def* wmode, const Def* a, const Def* b, const Def* dbg = {}) {

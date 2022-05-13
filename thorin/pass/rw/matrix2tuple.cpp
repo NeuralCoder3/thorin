@@ -6,14 +6,18 @@ const Def* Matrix2Tuple::rewrite(const Def* def) {
     if (auto i = old2new_.find(def); i != old2new_.end()) return i->second;
 
     if (auto mat_type = isa<Tag::Mat>(def)) {
-        auto elem_type = mat_type->arg(0);
-        return world().sigma({
-             world().type_int_width(64),
-             world().type_int_width(64),
-             world().type_ptr(world().arr(world().top_nat(), elem_type)),
-        });
+        return world().type_mat_tuple(mat_type);
     }else if(auto mat = def->isa<Mat>()){
         return world().tuple({mat->op(0), mat->op(1), mat->op(2)});
+    }else if(auto slot = isa<Tag::Slot>(def)){
+        auto mem = slot->arg(0);
+        auto type = slot->arg(1);
+
+        mem->dump();
+        type->dump();
+        type->dump();
+
+        //return world().op_slot();
     }else{
         auto [app, old_lam] = isa_apped_nom_lam(def);
         if (!isa_workable(old_lam)) return def;

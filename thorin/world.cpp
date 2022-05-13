@@ -394,6 +394,11 @@ const Def* World::tangent_type(const Def* A,bool left) {
         Defs tan_ops{tan_ops_arr};
         return sigma(tan_ops,sig->dbg());
     }
+
+    if(auto mat = isa<Tag::Mat>(A)){
+        return A;
+    }
+
     if(auto real = isa<Tag::Real>(A)) {
         return A;
     }else {
@@ -740,9 +745,9 @@ const Def* World::extract_(const Def* ex_type, const Def* tup, const Def* index,
         }
         if (type->isa<Sigma>()) return unify<Extract>(2, ex_type ? ex_type : type->op(*i), tup, index, dbg);
 
-
         if(auto mat = isa<Tag::Mat>(type)){
             auto elem_type = mat->arg(0);
+
             const Def* result_type = nullptr;
             switch (*i) {
                 case 0:
@@ -964,6 +969,7 @@ static const Def* tuple_of_types(const Def* t) {
     auto& world = t->world();
     if (auto sigma = t->isa<Sigma>()) return world.tuple(sigma->ops());
     if (auto arr = t->isa<Arr>()) return world.pack(arr->shape(), arr->body());
+    //if (isa<Tag::Mat>(t)) return world.tuple(world.type_mat_to_tuple(t)->ops());
     return t;
 }
 
