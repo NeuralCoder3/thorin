@@ -49,14 +49,16 @@ public:
 };
 
 
+
 /// Data constructor for a Sigma.
 class Mat : public Def {
 private:
-    Mat(const Def* type, const Def* rows, const Def* cols, const Def* ptr, const Def* dbg)
-            : Def(Node, type, {rows, cols, ptr}, 0, dbg) {
-        rows->dump();
-        cols->dump();
-        ptr->dump();
+    Mat(const Def* type, Defs dims, const Def* ptr, const Def* dbg)
+            : Def(Node, type, dims.append(ptr), 0, dbg) {
+    }
+
+    Mat(const Def* type, Defs ops, const Def* dbg)
+            : Def(Node, type, std::move(ops), 0, dbg) {
     }
 
 public:

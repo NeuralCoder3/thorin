@@ -79,7 +79,7 @@ const Def* Sigma  ::rebuild(World& w, const Def*  , Defs o, const Def* dbg) cons
 const Def* Type   ::rebuild(World& w, const Def*  , Defs o, const Def*    ) const { return w.type(o[0]); }
 const Def* Test   ::rebuild(World& w, const Def*  , Defs o, const Def* dbg) const { return w.test(o[0], o[1], o[2], o[3], dbg); }
 const Def* Tuple  ::rebuild(World& w, const Def* t, Defs o, const Def* dbg) const { return w.tuple(t, o, dbg); }
-const Def* Mat    ::rebuild(World& w, const Def* t, Defs o, const Def* dbg) const { return w.mat(t, o[0], o[1], o[2], dbg); }
+const Def* Mat    ::rebuild(World& w, const Def* t, Defs o, const Def* dbg) const { return w.mat(t, o, dbg); }
 const Def* Univ   ::rebuild(World& w, const Def*  , Defs  , const Def*    ) const { return w.univ(); }
 const Def* Var    ::rebuild(World& w, const Def* t, Defs o, const Def* dbg) const { return w.var(t, o[0]->as_nom(), dbg); }
 const Def* Vel    ::rebuild(World& w, const Def* t, Defs o, const Def* dbg) const { return w.vel(t, o[0], dbg); }
@@ -207,7 +207,7 @@ Sort Def::sort() const {
 }
 
 const Def* Def::arity() const {
-    if (thorin::isa<Tag::Mat>(this)) return world().lit_nat(3);
+    if (thorin::isa<Tag::Mat>(this)) return world().lit_nat(10); // Hack
     if (auto sigma  = isa<Sigma>()) return world().lit_nat(sigma ->num_ops());
     if (auto arr    = isa<Arr  >()) return arr->shape();
     if (sort() == Sort::Term)       return type()->arity();

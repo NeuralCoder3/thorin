@@ -158,6 +158,30 @@ public:
     Array<T> map(std::function<T(T, size_t)> f){
         return map<T>(f);
     }
+
+    template<typename Result = T >
+    Array<T> prepend(T value){
+        auto result = Array<Result>(size() + 1);
+        result[0] = value;
+
+        for (size_t i = 0; i < size(); ++i){
+            result[i + 1] = (*this)[i];
+        }
+
+        return result;
+    }
+
+    template<typename Result = T >
+    Array<T> append(T value){
+        auto result = Array<Result>(size() + 1);
+        result[size()] = value;
+
+        for (size_t i = 0; i < size(); ++i){
+            result[i] = (*this)[i];
+        }
+
+        return result;
+    }
 private:
     size_t size_;
     const T* ptr_;

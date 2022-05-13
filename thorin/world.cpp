@@ -464,8 +464,12 @@ const Def* World::sigma(Defs ops, const Def* dbg) {
     return unify<Sigma>(ops.size(), infer_type(ops), ops, dbg);
 }
 
-const Def* World::mat(const Def* mat_type, const Def* rows, const Def* cols, const Def* ptr, const Def* dbg) {
-    return unify<Mat>(3, mat_type, rows, cols, ptr, dbg);
+const Def* World::mat(const Def* mat_type, const Def* ptr, Defs dims, const Def* dbg) {
+    return unify<Mat>(dims.size() + 1, mat_type, dims, ptr, dbg);
+}
+
+const Def* World::mat(const Def* mat_type, Defs ops, const Def* dbg) {
+    return unify<Mat>(ops.size(), mat_type, ops, dbg);
 }
 
 static const Def* infer_sigma(World& world, Defs ops) {
@@ -720,7 +724,25 @@ const Def* World::extract_(const Def* ex_type, const Def* tup, const Def* index,
             return tuple(ops,dbg);
     }
 
-    auto type = tup->type();//->reduce_rec();
+    auto type = tup->type();
+    if (auto i = isa_lit(index)) {
+        if(auto mat = isa<Tag::Mat>(type)){
+            auto elem_type = mat->arg(0);
+
+            const Def* result_type = nullptr;
+            if(*i == 0){
+                result_type = type_ptr(arr(top_nat(), elem_type));
+            }else{
+                result_type = type_int_width(64);
+            }
+
+            if(result_type != nullptr){
+                return unify<Extract>(2, result_type, tup, index, dbg);
+            }
+        }
+    }
+
+    type = type->reduce_rec();
     if (err()) {
         if (!checker_->equiv(type->arity(), isa_sized_type(index->type())))
             err()->index_out_of_range(type->arity(), index);
@@ -744,21 +766,6 @@ const Def* World::extract_(const Def* ex_type, const Def* tup, const Def* index,
             if (insert->index()->isa<Lit>()) return extract(insert->tuple(), index, dbg);
         }
         if (type->isa<Sigma>()) return unify<Extract>(2, ex_type ? ex_type : type->op(*i), tup, index, dbg);
-
-        if(auto mat = isa<Tag::Mat>(type)){
-            auto elem_type = mat->arg(0);
-
-            const Def* result_type = nullptr;
-            switch (*i) {
-                case 0:
-                case 1: result_type = type_int_width(64); break;
-                case 2: result_type = type_ptr(arr(top_nat(), elem_type)); break;
-            }
-
-            if(result_type != nullptr){
-                return unify<Extract>(2, result_type, tup, index, dbg);
-            }
-        }
     }
 
     if(auto arr = type->isa<Arr>()){
@@ -1081,10 +1088,17 @@ const Def* World::params_without_return_continuation(const Pi* pi) {
     return sigma(pi->dom()->ops().skip_front().skip_back());
 }
 
-const Def* World::op_create_matrix(const Def* elem_type, const Def* row_size, const Def* col_size, const Def* mem){
-    row_size = op(Conv::u2u, type_int_width(64), row_size);
-    col_size = op(Conv::u2u, type_int_width(64), col_size);
-    auto arr_size = op(Wrap::mul, (nat_t)0, row_size, col_size);
+const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* mem){
+    const Def* arr_size = nullptr;
+    for( auto& dim_size : dims ){
+        auto dim_size_conv = op(Conv::u2u, type_int_width(64), dim_size);
+
+        if(arr_size == nullptr){
+            arr_size = dim_size_conv;
+        }else{
+            arr_size = op(Wrap::mul, (nat_t)0, dim_size_conv, arr_size);
+        }
+    }
 
     auto arr_size_nat = op_bitcast(type_nat(), arr_size);
     auto arr_sized_ty = arr(arr_size_nat, elem_type)->as<Arr>();
@@ -1092,7 +1106,7 @@ const Def* World::op_create_matrix(const Def* elem_type, const Def* row_size, co
     auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
     auto [gradient_mem, arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
     arr = op_bitcast(ptr_unknows_size, arr);
-    return tuple({gradient_mem, mat(type_mat(elem_type), row_size, col_size, arr)});
+    return tuple({gradient_mem, mat(type_mat(elem_type), arr, dims)});
 }
 
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg){

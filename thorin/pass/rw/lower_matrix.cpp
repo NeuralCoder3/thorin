@@ -177,7 +177,7 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
 }
 
 void LowerMatrix::construct_loop(Lam* entry, const Def* elem_type,  const Def* a_rows, const Def* b_cols, ConstructResult& constructResult){
-    auto [alloc_mem, result_matrix] = world().op_create_matrix(elem_type, a_rows, b_cols, entry->mem_var())->projs<2>();
+    auto [alloc_mem, result_matrix] = world().op_create_matrix(elem_type, {a_rows, b_cols}, entry->mem_var())->projs<2>();
 
     auto [left_row_loop, left_row_yield] = world().repeat(a_rows);
     auto left_row_loop_result = builder.mem().nom_filter_lam("left_row_loop_result");

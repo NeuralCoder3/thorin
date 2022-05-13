@@ -42,7 +42,7 @@ public:
     }
     ~World();
 
-    /// Inherits the World::state_ of the @p other World.
+    /// Inherits the World::state_ of the @p other world->
     World stub();
 
     /// @name Sea of Nodes
@@ -188,7 +188,8 @@ public:
         return nom_sigma(type<level>(), size, dbg);
     }
     const Def* sigma(Defs ops, const Def* dbg = {});
-    const Def* mat(const Def* mat_type, const Def* rows, const Def* cols, const Def* ptr, const Def* dbg = {});
+    const Def* mat(const Def* mat_type, const Def* ptr, Defs dims, const Def* dbg = {});
+    const Def* mat(const Def* mat_type, Defs ops, const Def* dbg = {});
     const Sigma* sigma() { return data_.sigma_; } ///< The unit type within Type 0.
     ///@}
 
@@ -565,7 +566,7 @@ public:
     //@{
     const Def* params_without_return_continuation(const Pi* pi);
     const Def* op_rev_diff(const Def* fn, const Def* dbg = {});
-    const Def* op_create_matrix(const Def* elem_type, const Def* row_size, const Def* col_size, const Def* mem);
+    const Def* op_create_matrix(const Def* elem_type, Defs dims, const Def* mem);
     const Def* row_col_to_index( const Def* row, const Def* col, const Def* col_size){
         row = op(Conv::u2u, type_int_width(64), row);
         col = op(Conv::u2u, type_int_width(64), col);
@@ -601,15 +602,14 @@ public:
 
     class Builder{
         std::vector<const Def*> v;
-        World& world;
+        World* world;
     public:
-
-        Builder(World& world) : world(world){
+        Builder(World* world) : world(world){
 
         }
 
         Builder& mem(){
-            v.push_back(world.type_mem());
+            v.push_back(world->type_mem());
             return *this;
         }
 
@@ -637,27 +637,27 @@ public:
         }
 
         Builder& lit_int(nat_t width, u64 value){
-            v.push_back(world.lit_int_width(width, value));
+            v.push_back(world->lit_int_width(width, value));
             return *this;
         }
 
         Builder& lit_double( r64 value){
-            v.push_back(world.lit_real(64, value));
+            v.push_back(world->lit_real(64, value));
             return *this;
         }
 
         Builder& type_matrix(const Def* elem_type){
-            v.push_back(world.type_mat(elem_type));
+            v.push_back(world->type_mat(elem_type));
             return *this;
         }
 
         Builder& type_int_width(nat_t width){
-            v.push_back(world.type_int_width(width));
+            v.push_back(world->type_int_width(width));
             return *this;
         }
 
         Builder& type_real(nat_t width){
-            v.push_back(world.type_real(width));
+            v.push_back(world->type_real(width));
             return *this;
         }
 
@@ -696,37 +696,41 @@ public:
         }
 
         Builder& cn_mem(){
-            add(world.cn(world.type_mem()));
+            add(world->cn(world->type_mem()));
             return *this;
         }
 
         const Pi* cn(){
-            return world.cn({v});
+            return world->cn(defs());
         }
 
         const Def* tuple(){
-            return world.tuple({v});
+            return world->tuple(defs());
         }
 
         const Def* app(const Def* callee){
-            return world.app(callee, {v});
+            return world->app(callee, defs());
         }
 
         void app_body(Lam* body, const Def* callee){
-            body->set_body(world.app(callee, {v}));
+            body->set_body(world->app(callee, defs()));
         }
 
         Lam* nom_filter_lam(const std::string& name){
-            return world.nom_filter_lam( cn(), world.dbg(name) );
+            return world->nom_filter_lam( cn(), world->dbg(name) );
         }
 
         Lam* nom_lam(const std::string& name){
-            return world.nom_lam( cn(), world.dbg(name) );
+            return world->nom_lam( cn(), world->dbg(name) );
+        }
+
+        Defs defs(){
+            return {v};
         }
     };
 
     Builder builder(){
-        return Builder(*this);
+        return {this};
     }
 
     const Lam* repeat(const Def* count, const Lam* yield, Defs extra = {} ){

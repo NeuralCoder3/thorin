@@ -481,7 +481,7 @@ std::pair<const Def*,const Def*> lit_of_type(World& world, const Def* mem, const
         auto rows = world.extract(like, (u64) 0);
         auto cols = world.extract(like, (u64) 1);
 
-        auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, rows, cols, mem)->projs<2>();
+        auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, {rows, cols}, mem)->projs<2>();
 
         auto ptr = world.extract(new_mat, (u64) 2);
 
@@ -1408,8 +1408,6 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
                 mat->dump();
             }
         }
-
-        world_.mat()
 
 
         auto fat_ptr=j_wrap(lea->arg(0));
