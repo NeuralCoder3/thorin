@@ -26,6 +26,9 @@ const Def* zero(World& w, const Def* type){
         return w.lit_int(int_type, (u64)0, {});
     }else if(auto float_type = isa<Tag::Real>(type)){
         return w.lit_real(as_lit(float_type->arg()), 0.0);
+    }else if(auto mat_type = isa<Tag::Mat>(type)){
+        auto elem_type = mat_type->arg(0);
+        //return w.op_create_matrix(elem_type, );
     }
 
     thorin::unreachable();

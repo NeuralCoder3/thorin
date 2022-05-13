@@ -16,6 +16,7 @@
 #include "thorin/pass/rw/scalarize.h"
 #include "thorin/pass/rw/peephole.h"
 #include "thorin/pass/rw/lower_matrix.h"
+#include "thorin/pass/rw/matrix2tuple.h"
 
 // old stuff
 // #include "thorin/transform/cleanup_world.h"
@@ -48,6 +49,7 @@ void optimize(World& world) {
     pre_auto_opt.run();*/
 
     PassMan::run<LowerMatrix>(world);
+    PassMan::run<Matrix2Tuple>(world);
 
 
 //    std::unique_ptr<ErrorHandler> err;

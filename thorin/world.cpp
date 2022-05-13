@@ -244,13 +244,6 @@ World::World(std::string_view name)
         ty->set_codom(pi({mem, nat}, sigma({mem, ptr})));
         data_.malloc_ = axiom(nullptr, ty, Tag::Malloc, 0, dbg("malloc"));
     }
-    { // mat_alloc: [T: *, as: nat] -> [M, nat] -> [M, ptr(T, as)]
-        auto ty      = nom_pi(type())->set_dom({type(), nat});
-        auto [T, as] = ty->vars<2>({dbg("T"), dbg("as")});
-        auto mat     = type_mat(T);
-        ty->set_codom(pi({mem, nat, T}, sigma({mem, mat})));
-        data_.malloc_ = axiom(nullptr, ty, Tag::MatAlloc, 0, dbg("mat_malloc"));
-    }
     { // mslot: [T: *, as: nat] -> [M, nat, nat] -> [M, ptr(T, as)]
         auto ty      = nom_pi(type())->set_dom({type(), nat});
         auto [T, as] = ty->vars<2>({dbg("T"), dbg("as")});
@@ -464,6 +457,10 @@ const Def* World::sigma(Defs ops, const Def* dbg) {
     if (n == 1) return ops[0];
     if (ops[0]->isa<Pi>() && std::all_of(ops.begin() + 1, ops.end(), [&](auto op) { return ops[0] == op; })) return arr(n, ops[0]);
     return unify<Sigma>(ops.size(), infer_type(ops), ops, dbg);
+}
+
+const Def* World::mat(const Def* mat_type, const Def* rows, const Def* cols, const Def* ptr, const Def* dbg) {
+    return unify<Mat>(3, mat_type, rows, cols, ptr, dbg);
 }
 
 static const Def* infer_sigma(World& world, Defs ops) {
@@ -718,7 +715,7 @@ const Def* World::extract_(const Def* ex_type, const Def* tup, const Def* index,
             return tuple(ops,dbg);
     }
 
-    auto type = tup->type()->reduce_rec();
+    auto type = tup->type();//->reduce_rec();
     if (err()) {
         if (!checker_->equiv(type->arity(), isa_sized_type(index->type())))
             err()->index_out_of_range(type->arity(), index);
@@ -741,8 +738,22 @@ const Def* World::extract_(const Def* ex_type, const Def* tup, const Def* index,
         if (auto insert = tup->isa<Insert>()) {
             if (insert->index()->isa<Lit>()) return extract(insert->tuple(), index, dbg);
         }
-
         if (type->isa<Sigma>()) return unify<Extract>(2, ex_type ? ex_type : type->op(*i), tup, index, dbg);
+
+
+        if(auto mat = isa<Tag::Mat>(type)){
+            auto elem_type = mat->arg(0);
+            const Def* result_type = nullptr;
+            switch (*i) {
+                case 0:
+                case 1: result_type = type_int_width(64); break;
+                case 2: result_type = type_ptr(arr(top_nat(), elem_type)); break;
+            }
+
+            if(result_type != nullptr){
+                return unify<Extract>(2, result_type, tup, index, dbg);
+            }
+        }
     }
 
     if(auto arr = type->isa<Arr>()){
@@ -750,6 +761,7 @@ const Def* World::extract_(const Def* ex_type, const Def* tup, const Def* index,
     }else {
         type=type->op(0);
     }
+
     return unify<Extract>(2, type, tup, index, dbg);
 }
 
@@ -1066,18 +1078,15 @@ const Def* World::params_without_return_continuation(const Pi* pi) {
 const Def* World::op_create_matrix(const Def* elem_type, const Def* row_size, const Def* col_size, const Def* mem){
     row_size = op(Conv::u2u, type_int_width(64), row_size);
     col_size = op(Conv::u2u, type_int_width(64), col_size);
-    /*auto arr_size = op(Wrap::mul, (nat_t)0, row_size, col_size);
+    auto arr_size = op(Wrap::mul, (nat_t)0, row_size, col_size);
 
     auto arr_size_nat = op_bitcast(type_nat(), arr_size);
     auto arr_sized_ty = arr(arr_size_nat, elem_type)->as<Arr>();
     auto arr_unknown_size_ty = arr(top_nat(), elem_type)->as<Arr>();
     auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
-    auto [gradient_mem, gradient_arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
-    gradient_arr = op_bitcast(ptr_unknows_size, gradient_arr);
-
-    return tuple({gradient_mem, tuple({row_size, col_size, gradient_arr})});*/
-
-    return app(app(ax_mat_alloc(), {elem_type}), {mem, row_size, col_size}, dbg("mat_alloc"));
+    auto [gradient_mem, arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
+    arr = op_bitcast(ptr_unknows_size, arr);
+    return tuple({gradient_mem, mat(type_mat(elem_type), row_size, col_size, arr)});
 }
 
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg){

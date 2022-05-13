@@ -70,6 +70,8 @@ add_library(libthorin
     pass/rw/lower_matrix.h
     pass/fp/tail_rec_elim.cpp
     pass/fp/tail_rec_elim.h
+    pass/rw/matrix2tuple.cpp
+    pass/rw/matrix2tuple.h
     pass/rw/alloc2malloc.cpp
     pass/rw/alloc2malloc.h
     pass/rw/lam_spec.cpp

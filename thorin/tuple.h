@@ -48,6 +48,27 @@ public:
     friend class World;
 };
 
+
+/// Data constructor for a Sigma.
+class Mat : public Def {
+private:
+    Mat(const Def* type, const Def* rows, const Def* cols, const Def* ptr, const Def* dbg)
+            : Def(Node, type, {rows, cols, ptr}, 0, dbg) {
+        rows->dump();
+        cols->dump();
+        ptr->dump();
+    }
+
+public:
+    /// @name virtual methods
+    ///@{
+    const Def* rebuild(World&, const Def*, Defs, const Def*) const override;
+    ///@}
+
+    static constexpr auto Node = Node::Mat;
+    friend class World;
+};
+
 class Arr : public Def {
 private:
     /// Constructor for a *structural* Arr.
