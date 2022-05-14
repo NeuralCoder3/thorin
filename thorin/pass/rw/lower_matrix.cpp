@@ -28,7 +28,6 @@ const Def* zero(World& w, const Def* type){
         return w.lit_real(as_lit(float_type->arg()), 0.0);
     }else if(auto mat_type = isa<Tag::Mat>(type)){
         auto elem_type = mat_type->arg(0);
-        //return w.op_create_matrix(elem_type, );
     }
 
     thorin::unreachable();
@@ -65,19 +64,19 @@ const Def* mul_add(World& w, const Def* rmode, const Def* type, const Def* lhs, 
 void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def* elem_type, const Def* cols, ConstructResult& constructResult){
     World& w = world();
 
-    auto [result_rows, result_cols, result_ptr] = constructResult.result_matrix->projs<3>();
+    auto [result_ptr, result_rows, result_cols] = constructResult.result_matrix->projs<3>();
     auto left_row_index = constructResult.left_row_index;
     auto right_col_index = constructResult.right_col_index;
     auto body = constructResult.body;
 
     auto a = entry->var(1);
     auto b = entry->var(2);
-    auto [b_rows, b_cols, b_ptr] = b->projs<3>();
+    auto [b_ptr, b_rows, b_cols] = b->projs<3>();
 
     switch (mop) {
         case MOp::mul: {
 
-            auto [a_rows, a_cols, a_ptr] = a->projs<3>();
+            auto [a_ptr, a_rows, a_cols] = a->projs<3>();
 
             auto [left_col_loop, left_col_yield] = w.repeat(a_cols, {elem_type});
 
@@ -124,7 +123,7 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
         case MOp::sub: {
             auto op_ty = mop == MOp::add ? Op::add : Op::sub;
 
-            auto [a_rows, a_cols, a_ptr] = a->projs<3>();
+            auto [a_ptr, a_rows, a_cols] = a->projs<3>();
 
             auto index = w.row_col_to_index(left_row_index, right_col_index, cols);
 
@@ -237,7 +236,7 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
         auto a = entry->var(1);
         auto b = entry->var(2);
 
-        auto [b_rows, b_cols, b_ptr] = b->projs<3>();
+        auto [b_ptr, b_rows, b_cols] = b->projs<3>();
 
         rows = b_rows;
         cols = b_cols;
@@ -253,8 +252,8 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
         auto a = entry->var(1);
         auto b = entry->var(2);
 
-        auto [a_rows, a_cols, a_ptr] = a->projs<3>();
-        auto [b_rows, b_cols, b_ptr] = b->projs<3>();
+        auto [a_ptr, a_rows, a_cols] = a->projs<3>();
+        auto [b_ptr, b_rows, b_cols] = b->projs<3>();
 
         rows = a_rows;
         cols = b_cols;

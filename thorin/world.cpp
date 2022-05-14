@@ -428,7 +428,10 @@ const Def* World::app(const Def* callee, const Def* arg, const Def* dbg) {
     auto pi = callee->type()->as<Pi>();
 
     if (err()) {
-        if (!checker_->assignable(pi->dom(), arg)) err()->ill_typed_app(callee, arg);
+        if (!checker_->assignable(pi->dom(), arg)){
+            checker_->assignable(pi->dom(), arg);
+            err()->ill_typed_app(callee, arg);
+        }
     }
 
     auto type           = pi->reduce(arg).back();
@@ -1090,6 +1093,7 @@ const Def* World::params_without_return_continuation(const Pi* pi) {
 
 const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* mem){
     const Def* arr_size = nullptr;
+    DefVec conv_defs;
     for( auto& dim_size : dims ){
         auto dim_size_conv = op(Conv::u2u, type_int_width(64), dim_size);
 
@@ -1098,6 +1102,8 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
         }else{
             arr_size = op(Wrap::mul, (nat_t)0, dim_size_conv, arr_size);
         }
+
+        conv_defs.push_back(dim_size_conv);
     }
 
     auto arr_size_nat = op_bitcast(type_nat(), arr_size);
@@ -1106,7 +1112,7 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
     auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
     auto [gradient_mem, arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
     arr = op_bitcast(ptr_unknows_size, arr);
-    return tuple({gradient_mem, mat(type_mat(elem_type), arr, dims)});
+    return tuple({gradient_mem, mat(type_mat(elem_type), arr, conv_defs)});
 }
 
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg){

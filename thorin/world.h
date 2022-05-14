@@ -478,19 +478,19 @@ public:
         if (auto mat_type = isa<Tag::Mat>(mat)) {
             auto elem_type = elem_ty_of_mat(mat_type);
             return sigma({
-                 type_int_width(64),
-                 type_int_width(64),
                  type_ptr(arr(top_nat(), elem_type)),
+                 type_int_width(64),
+                 type_int_width(64),
              });
         }
 
         thorin::unreachable();
     }
 
-    const Def* op(MOp o, const Def* rmode, const Def* a, const Def* b, const Def* mem, const Def* dbg ) {
+    const Def* op(MOp o, const Def* rmode, const Def* mem, const Def* a, const Def* b, const Def* dbg ) {
         return app(fn(o, rmode, elem_ty_of_mat(b->type())), {mem, a, b}, dbg);
     }
-    const Def* op(MOp o, const Def* rmode, const Def* a, const Def* mem, const Def* dbg) {
+    const Def* op(MOp o, const Def* rmode, const Def* mem, const Def* a, const Def* dbg) {
         return app(fn(o, rmode, elem_ty_of_mat(a->type())), {mem, a}, dbg);
     }
     const Def* op(Shr o, const Def* a, const Def* b, const Def* dbg = {}) { return app(fn(o, infer(a)), {a, b}, dbg); }

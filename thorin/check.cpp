@@ -63,7 +63,6 @@ bool Checker::assignable(const Def* type, const Def* val) {
         if (!equiv(type->arity(), val->type()->arity())) return false;
 
         if (auto a = isa_lit(arr->arity())) {
-            ;
             for (size_t i = 0; i != *a; ++i) {
                 if (!assignable(arr->proj(*a, i), val->proj(*a, i))) return false;
             }

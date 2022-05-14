@@ -54,7 +54,7 @@ public:
 class Mat : public Def {
 private:
     Mat(const Def* type, Defs dims, const Def* ptr, const Def* dbg)
-            : Def(Node, type, dims.append(ptr), 0, dbg) {
+            : Def(Node, type, dims.prepend(ptr), 0, dbg) {
     }
 
     Mat(const Def* type, Defs ops, const Def* dbg)

@@ -8,7 +8,7 @@ const Def* Matrix2Tuple::rewrite(const Def* def) {
     if (auto mat_type = isa<Tag::Mat>(def)) {
         return world().type_mat_tuple(mat_type);
     }else if(auto mat = def->isa<Mat>()){
-        return world().tuple({mat->op(0), mat->op(1), mat->op(2)});
+        return world().tuple(mat->ops());
     }else if(auto slot = isa<Tag::Slot>(def)){
         auto mem = slot->arg(0);
         auto type = slot->arg(1);
@@ -42,16 +42,12 @@ const Def* Matrix2Tuple::rewrite(const Def* def) {
         auto new_pi  = world().cn(world().sigma(new_doms));
         auto new_lam = old_lam->stub(world(), new_pi, old_lam->dbg());
 
-        for (size_t arg_i = 0, var_i = 0, n = app->num_args(); arg_i != n; ++arg_i) {
-            auto arg = app->arg(arg_i);
-            if (old_lam->dom(arg_i)->isa<Pi>()) {
-                new_vars.emplace_back(arg);
-            } else {
-                new_vars.emplace_back(new_lam->var(var_i++));
-            }
+        for (size_t var_i = 0, n = app->num_args(); var_i != n; ++var_i) {
+            new_vars.emplace_back(new_lam->var(var_i));
         }
 
-        new_lam->set(old_lam->reduce(world().tuple(new_vars)));
+        auto new_var_tuple = world().tuple(new_vars);
+        new_lam->set(old_lam->reduce(new_var_tuple));
         return old2new_[def] = world().app(new_lam, app->arg());
     }
 

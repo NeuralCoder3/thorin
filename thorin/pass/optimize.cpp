@@ -32,6 +32,8 @@ namespace thorin {
 void graph_print(std::ofstream& ofs, DefSet& done, const Def* def, int maxDepth);
 
 void optimize(World& world) {
+    world.set_log_level(LogLevel::Debug);
+
     PassMan::run<Scalerize>(world, nullptr);
     PassMan::run<EtaRed>(world);
     PassMan::run<TailRecElim>(world, nullptr);
@@ -41,7 +43,6 @@ void optimize(World& world) {
     // world.dbg(LogLevel::Debug);
     // world.set(std::make_unique<ErrorHandler>());
 
-    world.set_log_level(LogLevel::Debug);
 
     /*
     PassMan pre_auto_opt(world);
