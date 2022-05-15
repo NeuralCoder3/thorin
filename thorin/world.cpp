@@ -131,6 +131,14 @@ World::World(std::string_view name)
             CODE(MOp, smul)
             CODE(MOp, ssub)
         }
+        {
+            auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
+            auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
+            auto real_w = type_mat(c, w);
+            ty->set_codom(pi({mem, real_w}, sigma({mem, real_w})));
+
+            CODE(MOp, transpose)
+        }
     }
     { // ICmp: w: nat -> [int w, int w] -> bool
         auto ty    = nom_pi(type())->set_dom(nat);
@@ -1090,7 +1098,7 @@ const Def* World::params_without_return_continuation(const Pi* pi) {
     return sigma(pi->dom()->ops().skip_front().skip_back());
 }
 
-const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* mem){
+const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, bool zero_init){
     const Def* arr_size = nullptr;
     DefVec conv_defs;
     for( auto& dim_size : dims ){
@@ -1109,9 +1117,18 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
     auto arr_sized_ty = arr(arr_size_nat, elem_type)->as<Arr>();
     auto arr_unknown_size_ty = arr(top_nat(), elem_type)->as<Arr>();
     auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
-    auto [gradient_mem, arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
+    auto [alloc_mem, arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
+    const Def* result_mem = alloc_mem;
+
+    if(zero_init){
+        auto size_nat = op_bitcast(type_nat(), arr_size);
+        auto body_lit = lit_real(64, 0.0);
+        auto init = pack(size_nat, body_lit);
+        result_mem = op_store(result_mem, arr, init);
+    }
+
     arr = op_bitcast(ptr_unknows_size, arr);
-    return tuple({gradient_mem, mat(type_mat(dims.size(), elem_type), arr, conv_defs)});
+    return tuple({result_mem, mat(type_mat(dims.size(), elem_type), arr, conv_defs)});
 }
 
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg){

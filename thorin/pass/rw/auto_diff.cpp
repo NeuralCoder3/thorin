@@ -146,7 +146,6 @@ const Lam* vec_add(World& world, const Def* a, const Def* b, const Def* cont) {
             world.op(MOp::add, RMode::none, sum_pb->mem_var(), a, b)
         ));
         return sum_pb;
-
     }
 
     if(isFatPtrType(world,a->type())){
@@ -486,20 +485,11 @@ std::pair<const Def*,const Def*> lit_of_type(World& world, const Def* mem, const
     }
 
     if( auto mat = isa<Tag::Mat>(type) ){
-        auto elem_type = mat->arg(0);
+        auto elem_type = mat->arg(1);
         auto rows = world.extract(like, (u64) 1);
         auto cols = world.extract(like, (u64) 2);
-
-        auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, {rows, cols}, mem)->projs<2>();
-
-        auto ptr = world.extract(new_mat, (u64) 0);
-
-        auto size_nat = world.op_bitcast(world.type_nat(), world.op(Wrap::mul, RMode::none, rows, cols));
-        auto [result_mem, body_lit] = lit_of_type(world,alloc_mem, elem_type, nullptr, lit,dummy);
-        auto init = world.pack(size_nat, body_lit);
-        auto store_mem = world.op_store(result_mem, ptr, init);
-
-        return {store_mem, new_mat};
+        auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, {rows, cols}, mem, true)->projs<2>();
+        return {alloc_mem, new_mat};
     }
 
     // TODO: not for idef array
@@ -632,6 +622,7 @@ private:
     const Def* j_wrap(const Def* def); // 'identity' (except for lambdas, functions, and applications) traversal annotating the pullbacks
     const Def* j_wrap_convert(const Def* def);
     const Def* j_wrap_rop(ROp op, const Def* a, const Def* b); // pullback computation for predefined functions, specifically operations like +, -, *, /
+    const Def* j_wrap_mop(MOp op, const Def* a, const Def* b);
     void derive_external( const Lam* fun, Lam* pb, Lam* fw, Lam* res_lam);
     void derive_numeric(const Lam *fun, Lam *source, const Def *target, Lam *fw, const Def* fx, const Def* s, r32 delta);
 
@@ -1292,6 +1283,17 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto dst = j_wrap_rop(ROp(rop.flags()), a, b);
         return dst;
     }
+
+    if (auto mop = isa<Tag::MOp>(def)) {
+        auto ab = j_wrap(mop->arg());
+        auto [mem, a, b] = ab->projs<3>();
+        if(!pullbacks_.count(a)) {
+            pullbacks_[a] = extract_pb(a,ab);
+            pullbacks_[b] = extract_pb(b,ab);
+        }
+        auto dst = j_wrap_mop(MOp(mop.flags()), a, b);
+        return dst;
+    }
     // conditionals are transformed by the identity (no pullback needed)
     if(auto rcmp = isa<Tag::RCmp>(def)) {
         auto ab = j_wrap(rcmp->arg());
@@ -1901,6 +1903,78 @@ const Def* AutoDiffer::j_wrap_rop(ROp op, const Def* a, const Def* b) {
     pullbacks_[dst] = pb;
     return dst;
 }
+
+const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* a, const Def* b) {
+// build up pullback type for this expression
+    auto o_type = a->type(); // type of the operation
+    auto pbpi = createPbType(A,o_type);
+    auto pbT = pullbacks_[a]->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
+    auto pb = world_.nom_filter_lam(pbpi, world_.dbg("phi_"));
+
+    // shortened pullback type => takes pullback result (A) And continues
+    // always expand operation pullbacks
+    auto middle = world_.nom_filter_lam(pbT, world_.dbg("phi_middle"));
+    auto end = world_.nom_filter_lam(pbT, world_.dbg("phi_end"));
+
+    // constant for calculations
+    // Grab argument pullbacks
+    assert(pullbacks_.count(a) && "Pullbacks for MOp arguments should already be created");
+    assert(pullbacks_.count(b) && "Pullbacks for MOp arguments should already be created");
+    // pullbacks of the arguments
+    auto apb = pullbacks_[a];
+    auto bpb = pullbacks_[b];
+    const Def* dst;
+
+    switch (op) {
+        case MOp::add: {
+            auto [dst_mem, dst_mat] = world_.op(MOp::add, RMode::none, current_mem, a, b)->projs<2>();
+            current_mem = dst_mem;
+            dst = dst_mat;
+            pb->set_dbg(world_.dbg(pb->name() + "+"));
+            pb->set_body(world_.app(apb, {pb->mem_var(), pb->var(1), middle}));
+            middle->set_body(world_.app(bpb, {middle->mem_var(), pb->var(1), end}));
+            break;
+        }
+        case MOp::sub: {
+            auto [dst_mem, dst_mat] = world_.op(MOp::add, RMode::none, current_mem, a, b)->projs<2>();
+            current_mem = dst_mem;
+            dst = dst_mat;
+            pb->set_dbg(world_.dbg(pb->name() + "+"));
+            pb->set_body(world_.app(apb, {pb->mem_var(), pb->var(1), middle}));
+
+            auto [negate_mem, negate_mat] = world_.op(MOp::smul, RMode::none, middle->mem_var(), world_.lit_real(64, -1.0), pb->var(1))->projs<2>();
+            middle->set_body(world_.app(bpb, {negate_mem, negate_mat, end}));
+            break;
+        }
+        case MOp::mul: {
+            auto [dst_mem, dst_mat] = world_.op(MOp::mul, RMode::none, current_mem, a, b)->projs<2>();
+            current_mem = dst_mem;
+            dst = dst_mat;
+            pb->set_dbg(world_.dbg(pb->name() + "+"));
+
+            auto [transpose_a_mem, transpose_a] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(), a)->projs<2>();
+            auto [left_diff_mem, left_diff_mat] = world_.op(MOp::mul, RMode::none, transpose_a_mem, transpose_a, pb->var(1))->projs<2>();
+            pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
+
+            auto [transpose_b_mem, transpose_b] = world_.unary_op(MOp::transpose, RMode::none, middle->mem_var(),  b)->projs<2>();
+            auto [right_diff_mem, right_diff_mat] = world_.op(MOp::mul, RMode::none, transpose_b_mem, pb->var(1), transpose_b)->projs<2>();
+            middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
+            break;
+        }
+        default:
+            // only +, -, *, / are implemented as basic operations
+            THORIN_UNREACHABLE;
+    }
+
+    auto adiff = world_.tuple(vars_without_mem_cont(middle));
+    auto bdiff = world_.tuple(vars_without_mem_cont(end));
+    auto sum_pb=vec_add(world_,adiff,bdiff,pb->ret_var());
+    end->set_body(world_.app(sum_pb, end->mem_var()));
+    auto result = world_.tuple({current_mem, dst});
+    pullbacks_[result] = pb;
+    return result;
+}
+
 // seen is a simple lookup in the src_to_dst mapping
 const Def* AutoDiffer::seen(const Def* src) { return src_to_dst_.contains(src) ? src_to_dst_[src] : nullptr; }
 

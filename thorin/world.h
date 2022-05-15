@@ -501,6 +501,12 @@ public:
     const Def* op(MOp o, nat_t mode, const Def* mem, const Def* a, const Def* b, const Def* dbg  = {}) {
         return op(o, lit_nat(mode), mem, a, b, dbg);
     }
+    const Def* unary_op(MOp o, const Def* rmode, const Def* mem, const Def* a, const Def* dbg  = {}) {
+        return app(app(ax(o), {rmode, dim_count_of_mat(a->type()), elem_ty_of_mat(a->type())}, dbg), {mem, a}, dbg);
+    }
+    const Def* unary_op(MOp o, nat_t mode, const Def* mem, const Def* a, const Def* dbg  = {}) {
+        return unary_op(o, lit_nat(mode), mem, a, dbg);
+    }
     const Def* op(Shr o, const Def* a, const Def* b, const Def* dbg = {}) { return app(fn(o, infer(a)), {a, b}, dbg); }
     const Def* op(Wrap o, const Def* wmode, const Def* a, const Def* b, const Def* dbg = {}) {
         return app(fn(o, wmode, infer(a)), {a, b}, dbg);
@@ -574,7 +580,7 @@ public:
     //@{
     const Def* params_without_return_continuation(const Pi* pi);
     const Def* op_rev_diff(const Def* fn, const Def* dbg = {});
-    const Def* op_create_matrix(const Def* elem_type, Defs dims, const Def* mem);
+    const Def* op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, bool zero_init = false);
     const Def* row_col_to_index( const Def* row, const Def* col, const Def* col_size){
         row = op(Conv::u2u, type_int_width(64), row);
         col = op(Conv::u2u, type_int_width(64), col);

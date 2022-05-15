@@ -18,6 +18,8 @@ const Def* Matrix2Tuple::rewrite(const Def* def) {
         type->dump();
 
         //return world().op_slot();
+    }else if(auto extract= def->isa<Extract>()) {
+        extract->dump();
     }else{
         auto [app, old_lam] = isa_apped_nom_lam(def);
         if (!isa_workable(old_lam)) return def;

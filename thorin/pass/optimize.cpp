@@ -49,16 +49,16 @@ void optimize(World& world) {
     pre_auto_opt.add<PartialEval>();
     pre_auto_opt.run();*/
 
-    PassMan::run<LowerMatrix>(world);
-    PassMan::run<Matrix2Tuple>(world);
-
-
 //    std::unique_ptr<ErrorHandler> err;
 //    ErrorHandler* err;
 //    world.set((std::unique_ptr<ErrorHandler>&&) nullptr);
 
     PassMan optA(world);
     optA.add<AutoDiff>();
+    optA.run();
+
+    PassMan::run<LowerMatrix>(world);
+    PassMan::run<Matrix2Tuple>(world);
 
 //     PassMan optZ(world);
 //     optZ.add<ZipEval>();

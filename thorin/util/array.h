@@ -435,6 +435,17 @@ public:
     Array<T> map(std::function<T(T, size_t)> f){
         return map<T>(f);
     }
+
+    template<typename Result = T >
+    static Array<T> repeat(size_t repeat_size, T value){
+        auto result = Array<Result>(repeat_size);
+
+        for (size_t i = 0; i < repeat_size; ++i){
+            result[i] = value;
+        }
+
+        return result;
+    }
 private:
     ArrayStorage<T, std::is_trivial<T>::value ? 5 : 0> storage_;
 };

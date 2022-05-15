@@ -12,7 +12,8 @@ bool is_scalar(MOp mop){
     switch (mop) {
         case MOp::sadd:
         case MOp::smul:
-        case MOp::ssub:{
+        case MOp::ssub:
+        case MOp::transpose:{
             return true;
         }
         default:{
@@ -69,13 +70,12 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
     auto right_col_index = constructResult.right_col_index;
     auto body = constructResult.body;
 
-    auto a = entry->var(1);
-    auto b = entry->var(2);
-    auto [b_ptr, b_rows, b_cols] = b->projs<3>();
-
     switch (mop) {
         case MOp::mul: {
 
+            auto a = entry->var(1);
+            auto b = entry->var(2);
+            auto [b_ptr, b_rows, b_cols] = b->projs<3>();
             auto [a_ptr, a_rows, a_cols] = a->projs<3>();
 
             auto [left_col_loop, left_col_yield] = w.repeat(a_cols, {elem_type});
@@ -123,6 +123,10 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
         case MOp::sub: {
             auto op_ty = mop == MOp::add ? Op::add : Op::sub;
 
+            auto a = entry->var(1);
+            auto b = entry->var(2);
+            auto [b_ptr, b_rows, b_cols] = b->projs<3>();
+
             auto [a_ptr, a_rows, a_cols] = a->projs<3>();
 
             auto index = w.row_col_to_index(left_row_index, right_col_index, cols);
@@ -161,6 +165,10 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
                     thorin::unreachable();
             }
 
+            auto a = entry->var(1);
+            auto b = entry->var(2);
+            auto [b_ptr, b_rows, b_cols] = b->projs<3>();
+
             auto index = w.row_col_to_index(left_row_index, right_col_index, cols);
             auto right_ptr = w.op_lea(b_ptr, index);
             auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), right_ptr)->projs<2>();
@@ -171,14 +179,41 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
             builder.add(store_mem).app_body(body, body->ret_var());
             break;
         }
+        case MOp::transpose: {
+            auto b = entry->var(1);
+            auto [b_ptr, b_rows, b_cols] = b->projs<3>();
+
+            auto src_index = w.row_col_to_index(left_row_index, right_col_index, cols);
+            auto src_ptr = w.op_lea(b_ptr, src_index);
+            auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), src_ptr)->projs<2>();
+
+            auto dst_index = w.row_col_to_index(right_col_index, left_row_index, cols);
+            auto dst_lea = w.op_lea(result_ptr, dst_index);
+
+            auto store_mem = w.op_store(right_load_mem, dst_lea, right_value);
+
+            builder.add(store_mem).app_body(body, body->ret_var());
+        }
+
         default: {}
     }
 }
 
-void LowerMatrix::construct_loop(Lam* entry, const Def* elem_type,  const Def* a_rows, const Def* b_cols, ConstructResult& constructResult){
-    auto [alloc_mem, result_matrix] = world().op_create_matrix(elem_type, {a_rows, b_cols}, entry->mem_var())->projs<2>();
+void LowerMatrix::construct_loop(Lam* entry, const Def* elem_type, const Def* rows, const Def* cols, bool invert_alloc, ConstructResult& constructResult){
+    const Def* alloc_rows;
+    const Def* alloc_cols;
 
-    auto [left_row_loop, left_row_yield] = world().repeat(a_rows);
+    if(invert_alloc){
+        alloc_rows = cols;
+        alloc_cols = rows;
+    }else{
+        alloc_rows = rows;
+        alloc_cols = cols;
+    }
+
+    auto [alloc_mem, result_matrix] = world().op_create_matrix(elem_type, {alloc_rows, alloc_cols}, entry->mem_var())->projs<2>();
+
+    auto [left_row_loop, left_row_yield] = world().repeat(rows);
     auto left_row_loop_result = builder.mem().nom_filter_lam("left_row_loop_result");
 
     builder
@@ -191,7 +226,7 @@ void LowerMatrix::construct_loop(Lam* entry, const Def* elem_type,  const Def* a
             .add(left_row_loop_result)
             .app_body(entry, left_row_loop);
 
-    auto [right_col2_loop, right_col2_yield] = world().repeat(b_cols);
+    auto [right_col2_loop, right_col2_yield] = world().repeat(cols);
 
     builder
             .mem(left_row_yield)
@@ -224,18 +259,23 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
     Lam* entry;
     const Def* rows;
     const Def* cols;
+    bool target_alloc_invert = false;
     if(is_scalar(mop)){
-        entry = builder
-                .mem()
-                .add(elem_type)
-                .type_matrix(2, elem_type)
+        auto buil = builder.mem();
+
+        if(mop == MOp::transpose){
+            target_alloc_invert = true;
+        }else{
+            buil.add(elem_type);
+        }
+
+        entry = buil.type_matrix(2, elem_type)
                 .add(
                     builder.mem().type_matrix(2, elem_type).cn()
                 ).nom_filter_lam("matrix_mul_entry");
 
-        auto a = entry->var(1);
-        auto b = entry->var(2);
-
+        auto var_index = 2 - (target_alloc_invert ? 1 : 0);
+        auto b = entry->var(var_index);
         auto [b_ptr, b_rows, b_cols] = b->projs<3>();
 
         rows = b_rows;
@@ -259,7 +299,7 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
         cols = b_cols;
     }
 
-    construct_loop(entry, elem_type, rows, cols, constructResult);
+    construct_loop(entry, elem_type, rows, cols, target_alloc_invert, constructResult);
     construct_mop(entry, mop, rmode, elem_type, cols, constructResult);
 
     mop_variants[signature] = entry;
