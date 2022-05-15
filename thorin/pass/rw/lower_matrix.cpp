@@ -228,9 +228,9 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
         entry = builder
                 .mem()
                 .add(elem_type)
-                .type_matrix(elem_type)
+                .type_matrix(2, elem_type)
                 .add(
-                    builder.mem().type_matrix(elem_type).cn()
+                    builder.mem().type_matrix(2, elem_type).cn()
                 ).nom_filter_lam("matrix_mul_entry");
 
         auto a = entry->var(1);
@@ -243,10 +243,10 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
     }else{
         entry = builder
                 .mem()
-                .type_matrix(elem_type)
-                .type_matrix(elem_type)
+                .type_matrix(2, elem_type)
+                .type_matrix(2, elem_type)
                 .add(
-                    builder.mem().type_matrix(elem_type).cn()
+                    builder.mem().type_matrix(2, elem_type).cn()
                 ).nom_filter_lam("matrix_mul_entry");
 
         auto a = entry->var(1);
@@ -297,11 +297,12 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         auto mop_app = mop->callee()->as<App>();
 
         auto rmode = mop_app->arg(0);
-        auto elem_type = mop_app->arg(1);
+        auto dim_count = mop_app->arg(1);
+        auto elem_type = mop_app->arg(2);
         auto mop_axiom = mop.axiom();
 
         auto mop_lam = create_MOp_lam(mop_axiom, elem_type, rmode);
-        auto result_lam = builder.mem().type_matrix(elem_type).nom_filter_lam("mat_mul_res");
+        auto result_lam = builder.mem().type_matrix(2, elem_type).nom_filter_lam("mat_mul_res");
         builder.flatten(arg_wrap).add(result_lam).app_body(enter, mop_lam);
         builder.mem(result_lam).app_body(result_lam, exit);
 

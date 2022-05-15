@@ -207,7 +207,11 @@ Sort Def::sort() const {
 }
 
 const Def* Def::arity() const {
-    if (thorin::isa<Tag::Mat>(this)) return world().lit_nat(3);
+    if (auto mat = thorin::isa<Tag::Mat>(this)){
+        if (auto i = isa_lit(mat->arg(0))) {
+            return world().lit_nat(*i + 1);
+        }
+    }
     if (auto sigma  = isa<Sigma>()) return world().lit_nat(sigma ->num_ops());
     if (auto arr    = isa<Arr  >()) return arr->shape();
     if (sort() == Sort::Term)       return type()->arity();

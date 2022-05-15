@@ -61,7 +61,7 @@ World::World(std::string_view name)
     auto mem = data_.type_mem_ = axiom(type(), Tag::Mem, 0, dbg("mem"));
 
     { // mat: [T: *] -> *
-        data_.type_mat_ = axiom(nullptr, pi(type(), type()), Tag::Mat, 0, dbg("mat"));
+        data_.type_mat_ = axiom(nullptr, pi(sigma({nat, type()}), type()), Tag::Mat, 0, dbg("mat"));
     }
 
     { // ptr: [T: *, as: nat] -> *
@@ -104,32 +104,32 @@ World::World(std::string_view name)
     }
     { // MOp: [m: nat, w: nat] -> [m64 w, m64 w] -> m64 w
         {
-            auto ty     = nom_pi(type())->set_dom({nat, type()});
-            auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
-            auto real_w = type_mat(w);
+            auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
+            auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
+            auto real_w = type_mat(c, w);
             ty->set_codom(pi({mem, real_w, real_w}, sigma({mem, real_w})));
 
             CODE(MOp, add)
             CODE(MOp, sub)
+        }
+        {
+            auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
+            auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
+            auto mat_left = type_mat(top_nat(), w);
+            auto mat_right = type_mat(c, w);
+            ty->set_codom(pi({mem, mat_left, mat_right}, sigma({mem, mat_right})));
+
             CODE(MOp, mul)
         }
         {
-            auto ty     = nom_pi(type())->set_dom({nat, type()});
-            auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
-            auto real_w = type_mat(w);
+            auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
+            auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
+            auto real_w = type_mat(c, w);
             ty->set_codom(pi({mem, w, real_w}, sigma({mem, real_w})));
 
             CODE(MOp, sadd)
             CODE(MOp, smul)
             CODE(MOp, ssub)
-        }
-        {
-            auto ty     = nom_pi(type())->set_dom({nat, type()});
-            auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
-            auto real_w = type_mat(w);
-            ty->set_codom(pi({mem, real_w}, sigma({mem, real_w})));
-
-            CODE(MOp, sum)
         }
     }
     { // ICmp: w: nat -> [int w, int w] -> bool
@@ -727,22 +727,7 @@ const Def* World::extract_(const Def* ex_type, const Def* tup, const Def* index,
     }
 
     auto type = tup->type();
-    if (auto i = isa_lit(index)) {
-        if(auto mat = isa<Tag::Mat>(type)){
-            auto elem_type = mat->arg(0);
 
-            const Def* result_type = nullptr;
-            if(*i == 0){
-                result_type = type_ptr(arr(top_nat(), elem_type));
-            }else{
-                result_type = type_int_width(64);
-            }
-
-            if(result_type != nullptr){
-                return unify<Extract>(2, result_type, tup, index, dbg);
-            }
-        }
-    }
 
     type = type->reduce_rec();
     if (err()) {
@@ -768,6 +753,21 @@ const Def* World::extract_(const Def* ex_type, const Def* tup, const Def* index,
             if (insert->index()->isa<Lit>()) return extract(insert->tuple(), index, dbg);
         }
         if (type->isa<Sigma>()) return unify<Extract>(2, ex_type ? ex_type : type->op(*i), tup, index, dbg);
+
+        if(auto mat = isa<Tag::Mat>(type)){
+            auto elem_type = mat->arg(1);
+
+            const Def* result_type = nullptr;
+            if(*i == 0){
+                result_type = type_ptr(arr(top_nat(), elem_type));
+            }else{
+                result_type = type_int_width(64);
+            }
+
+            if(result_type != nullptr){
+                return unify<Extract>(2, result_type, tup, index, dbg);
+            }
+        }
     }
 
     if(auto arr = type->isa<Arr>()){
@@ -1111,7 +1111,7 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
     auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
     auto [gradient_mem, arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
     arr = op_bitcast(ptr_unknows_size, arr);
-    return tuple({gradient_mem, mat(type_mat(elem_type), arr, conv_defs)});
+    return tuple({gradient_mem, mat(type_mat(dims.size(), elem_type), arr, conv_defs)});
 }
 
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg){

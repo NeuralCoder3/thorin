@@ -368,11 +368,11 @@ public:
     const Axiom* type_ptr() { return data_.type_ptr_; }
     const Axiom* type_mat() { return data_.type_mat_; }
     const App* type_bool() { return data_.type_bool_; }
-    const Def* type_mat(const Def* elem_type) {
-        std::cout << "hello" << std::endl;
-        elem_type->dump();
-        std::cout << "ende" << std::endl;
-        return app(type_mat(), elem_type);
+    const Def* type_mat(nat_t dim_count, const Def* elem_type) {
+        return type_mat(lit_nat(dim_count), elem_type);
+    }
+    const Def* type_mat(const Def* dim_count, const Def* elem_type) {
+        return app(type_mat(), {dim_count, elem_type});
     }
     const App* type_int_width(nat_t width) { return type_int(lit_nat(width2mod(width))); }
     const App* type_int(nat_t mod) { return type_int(lit_nat(mod)); }
@@ -466,9 +466,17 @@ public:
     const Def* op(ROp o, const Def* rmode, const Def* a, const Def* b, const Def* dbg = {}) {
         return app(fn(o, rmode, infer(a)), {a, b}, dbg);
     }
+
     const Def* elem_ty_of_mat(const Def* matrix){
         if(auto mat_type = isa<Tag::Mat>(matrix)){
-            return mat_type->arg(2);
+            return mat_type->arg(1);
+        }
+
+        thorin::unreachable();
+    }
+    const Def* dim_count_of_mat(const Def* matrix){
+        if(auto mat_type = isa<Tag::Mat>(matrix)){
+            return mat_type->arg(0);
         }
 
         thorin::unreachable();
@@ -488,10 +496,10 @@ public:
     }
 
     const Def* op(MOp o, const Def* rmode, const Def* mem, const Def* a, const Def* b, const Def* dbg  = {}) {
-        return app(fn(o, rmode, elem_ty_of_mat(b->type())), {mem, a, b}, dbg);
+        return app(app(ax(o), {rmode, dim_count_of_mat(b->type()), elem_ty_of_mat(b->type())}, dbg), {mem, a, b}, dbg);
     }
     const Def* op(MOp o, nat_t mode, const Def* mem, const Def* a, const Def* b, const Def* dbg  = {}) {
-        return app(fn(o, lit_nat(mode), elem_ty_of_mat(b->type())), {mem, a, b}, dbg);
+        return op(o, lit_nat(mode), mem, a, b, dbg);
     }
     const Def* op(Shr o, const Def* a, const Def* b, const Def* dbg = {}) { return app(fn(o, infer(a)), {a, b}, dbg); }
     const Def* op(Wrap o, const Def* wmode, const Def* a, const Def* b, const Def* dbg = {}) {
@@ -646,8 +654,8 @@ public:
             return *this;
         }
 
-        Builder& type_matrix(const Def* elem_type){
-            v.push_back(world->type_mat(elem_type));
+        Builder& type_matrix(nat_t dim_count, const Def* elem_type){
+            v.push_back(world->type_mat(dim_count, elem_type));
             return *this;
         }
 
