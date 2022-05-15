@@ -429,7 +429,6 @@ const Def* World::app(const Def* callee, const Def* arg, const Def* dbg) {
 
     if (err()) {
         if (!checker_->assignable(pi->dom(), arg)){
-            checker_->assignable(pi->dom(), arg);
             err()->ill_typed_app(callee, arg);
         }
     }

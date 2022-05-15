@@ -140,6 +140,15 @@ const Lam* vec_add(World& world, const Def* a, const Def* b, const Def* cont) {
         return sum_pb;
     }
 
+    if(isa<Tag::Mat>(a->type())){
+        sum_pb->set_body(world.app(
+            cont,
+            world.op(MOp::add, RMode::none, sum_pb->mem_var(), a, b)
+        ));
+        return sum_pb;
+
+    }
+
     if(isFatPtrType(world,a->type())){
         auto [size_a, arr_a] = a->projs<2>();
         auto [size_b, arr_b] = b->projs<2>();
@@ -478,12 +487,12 @@ std::pair<const Def*,const Def*> lit_of_type(World& world, const Def* mem, const
 
     if( auto mat = isa<Tag::Mat>(type) ){
         auto elem_type = mat->arg(0);
-        auto rows = world.extract(like, (u64) 0);
-        auto cols = world.extract(like, (u64) 1);
+        auto rows = world.extract(like, (u64) 1);
+        auto cols = world.extract(like, (u64) 2);
 
         auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, {rows, cols}, mem)->projs<2>();
 
-        auto ptr = world.extract(new_mat, (u64) 2);
+        auto ptr = world.extract(new_mat, (u64) 0);
 
         auto size_nat = world.op_bitcast(world.type_nat(), world.op(Wrap::mul, RMode::none, rows, cols));
         auto [result_mem, body_lit] = lit_of_type(world,alloc_mem, elem_type, nullptr, lit,dummy);
@@ -1289,6 +1298,14 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto [a, b] = ab->projs<2>();
         auto dst = world_.op(RCmp(rcmp.flags()), nat_t(0), a, b);
         return dst;
+    }
+
+    if(auto rcmp = isa<Tag::MOp>(def)) {
+        auto ab = j_wrap(rcmp->arg());
+        auto [a, b] = ab->projs<2>();
+        auto [out_mem, mat] = world_.op(MOp(rcmp.flags()), nat_t(0), current_mem, a, b)->projs<2>();
+        current_mem = out_mem;
+        return mat;
     }
 
     if (auto div = isa<Tag::Div>(def)) {

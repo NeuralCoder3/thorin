@@ -487,11 +487,11 @@ public:
         thorin::unreachable();
     }
 
-    const Def* op(MOp o, const Def* rmode, const Def* mem, const Def* a, const Def* b, const Def* dbg ) {
+    const Def* op(MOp o, const Def* rmode, const Def* mem, const Def* a, const Def* b, const Def* dbg  = {}) {
         return app(fn(o, rmode, elem_ty_of_mat(b->type())), {mem, a, b}, dbg);
     }
-    const Def* op(MOp o, const Def* rmode, const Def* mem, const Def* a, const Def* dbg) {
-        return app(fn(o, rmode, elem_ty_of_mat(a->type())), {mem, a}, dbg);
+    const Def* op(MOp o, nat_t mode, const Def* mem, const Def* a, const Def* b, const Def* dbg  = {}) {
+        return app(fn(o, lit_nat(mode), elem_ty_of_mat(b->type())), {mem, a, b}, dbg);
     }
     const Def* op(Shr o, const Def* a, const Def* b, const Def* dbg = {}) { return app(fn(o, infer(a)), {a, b}, dbg); }
     const Def* op(Wrap o, const Def* wmode, const Def* a, const Def* b, const Def* dbg = {}) {
