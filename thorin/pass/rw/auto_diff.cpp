@@ -1168,8 +1168,6 @@ const Lam* lam_fat_ptr_wrap(World& world, const Lam* lam){
             doms[i] = dom;
         }
 
-        doms[i]->dump();
-
         i++;
     }
 
@@ -1419,13 +1417,8 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto [ty,addr_space] = ptr_ty->arg()->projs<2>();
         auto [src_ptr, ignore] = lea->arg()->projs<2>();
         if(auto extract = src_ptr->isa<Extract>()){
-            extract->tuple()->dump();
-            extract->tuple()->type()->dump();
-            extract->tuple()->dumpClass();
             auto value = extract->tuple();
-            if(auto mat = isa<Tag::Mat>(value->type())){
-                mat->dump();
-            }
+            //TODO:
         }
 
 
@@ -1752,12 +1745,6 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
               return pack->body();
             });
         return j_wrap_tuple(tup);
-    }
-
-    if(auto mat = def->isa<Mat>()){
-        mat->dump();
-        mat->type()->dump();
-        mat->type()->dump();
     }
 
     if (auto extract = def->isa<Extract>()) {

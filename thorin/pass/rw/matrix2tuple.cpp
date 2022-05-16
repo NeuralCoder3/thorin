@@ -50,10 +50,6 @@ const Def* Matrix2Tuple::rewrite_convert(const Def* def) {
     }else if(auto tuple = def->isa<Tuple>()){
         return world().tuple(tuple->ops().map([&](auto elem, auto){return rewrite_cached(elem);}));
     }else if(auto extract = def->isa<Extract>()){
-        if(isa<Tag::Alloc>(extract->tuple())){
-            extract->dump();
-        }
-
         auto tuple = rewrite_cached(extract->tuple());
         auto idx = rewrite_cached(extract->index());
         return world().extract(tuple, idx);
@@ -115,26 +111,9 @@ const Def* Matrix2Tuple::rewrite_convert(const Def* def) {
             auto new_args_tuple = world().tuple(new_args);
             return world().app(new_lam, new_args_tuple);
         }else if(auto bitcast = isa<Tag::Bitcast>(def)) {
-            def->dump();
-            def->type()->dump();
-            world().tuple(def->ops())->dump();
-            world().tuple(def->ops())->type()->dump();
 
             auto new_ops = def->ops().map([&](auto elem, auto){return rewrite_cached(elem);});
-
-            world().tuple(new_ops)->dump();
-            world().tuple(new_ops)->type()->dump();
-
             auto new_type = rewrite_type_cached(def->type());
-
-            new_type->dump();
-            new_type->type()->dump();
-
-            auto testName = def->debug().name;
-            auto lol = testName.c_str();
-            if(testName.ends_with("124270")){
-                new_type->type()->dump();
-            }
 
             auto [dst_type, src_type] = bitcast->callee()->as<App>()->arg()->projs<2>();
             auto src = bitcast->arg(0);
@@ -151,9 +130,6 @@ const Def* Matrix2Tuple::rewrite_convert(const Def* def) {
         return def->rebuild(world(), rewrite_type_cached(def->type()), def->ops().map([&](auto elem, auto){return rewrite_cached(elem);}), def->dbg());
     }
 
-    def->dump();
-    def->type()->dump();
-    def->dumpClass();
     thorin::unreachable();
 }
 

@@ -64,8 +64,6 @@ const Def* op(World& w, Op op, const Def* rmode, const Def* type, const Def* lhs
         }
     }
 
-    type->dump();
-
     thorin::unreachable();
 }
 
@@ -311,7 +309,7 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
     Lam* entry;
     const Def *rows, *cols;
     if(is_scalar(mop)){
-        auto buil = builder.mem()
+        entry = builder.mem()
                 .add(elem_type)
                 .type_matrix(2, elem_type)
                 .add(
@@ -452,10 +450,6 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
     }else if(auto tuple = current->isa<Tuple>()){
         auto wrapped = tuple->projs().map([&](auto elem, auto) { return rewrite_rec(elem); });
         auto resultTuple = world().tuple(wrapped);
-
-        if(tuple->num_projs() != resultTuple->num_projs()){
-            tuple->dump();
-        }
         return resultTuple;
     }else if(auto extract = current->isa<Extract>()){
         auto jeidx= rewrite_rec(extract->index());
@@ -463,7 +457,6 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
 
         if(jtup->num_projs() != extract->tuple()->num_projs()){
             rewrite_rec(extract->tuple());
-            tuple->dump();
         }
 
         return world().extract_unsafe(jtup, jeidx,extract->dbg());
@@ -471,8 +464,6 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         return lit;
     }else if(auto var = current->isa<Var>()){
         return var;
-    }else if(auto lam = current->isa<Lam>()){
-        current->dump();
     }
 
     return current;

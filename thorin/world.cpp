@@ -1141,8 +1141,6 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
     if(init_def != nullptr){
         auto size_nat = op_bitcast(type_nat(), arr_size);
         auto init = pack(size_nat, init_def);
-        init_def->type()->dump();
-        init_def->dump();
         result_mem = op_store(result_mem, arr, init);
     }
 
@@ -1195,7 +1193,6 @@ const Def* World::op_rev_diff(const Def* fn, const Def* dbg){
         auto mk_pullback = app(data_.op_rev_diff_, tuple({fn_ty,diff_ty}), this->dbg("mk_pullback"));
         auto pullback = app(mk_pullback, fn, dbg);
 
-        pullback->type()->dump();
         return pullback;
     }
 
