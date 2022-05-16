@@ -320,7 +320,6 @@ const Def* LowerMatrix::rewrite_rec(const Def* current){
 const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
 
     if (auto mop = isa<Tag::MOp>(current)) {
-
         auto enter = builder.mem().nom_filter_lam("enter_mop");
         auto exit = builder.mem().nom_filter_lam("exit_mop");
         if(tail == nullptr){

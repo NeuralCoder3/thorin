@@ -10,8 +10,14 @@ public:
     Matrix2Tuple(PassMan& man)
         : RWPass(man, "matrix2tuple") {}
 
-    const Def* rewrite(const Def*) override;
+    void enter() override;
+    const Def* rewrite_cached(const Def* def);
+    const Def* rewrite_type_cached(const Def* def);
+    const Def* rewrite_type(const Def* def);
+    const Def* rewrite_convert(const Def* def);
     Def2Def old2new_;
+    const Def* currentMem;
+    bool found = false;
 };
 }
 

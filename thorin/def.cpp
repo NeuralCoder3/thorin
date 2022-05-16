@@ -317,6 +317,7 @@ bool Def::is_set() const {
 
     if (std::ranges::all_of(ops(), [](auto op) { return op != nullptr; })) return true;
 
+    dump();
     assert(std::ranges::all_of(ops(), [](auto op) { return op == nullptr; }) && "some operands are set, others aren't");
     return false;
 }
