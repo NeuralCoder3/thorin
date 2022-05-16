@@ -581,6 +581,7 @@ public:
     const Def* params_without_return_continuation(const Pi* pi);
     const Def* op_rev_diff(const Def* fn, const Def* dbg = {});
     const Def* op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, bool zero_init = false);
+    const Def* op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, const Def* init_def);
     const Def* row_col_to_index( const Def* row, const Def* col, const Def* col_size){
         row = op(Conv::u2u, type_int_width(64), row);
         col = op(Conv::u2u, type_int_width(64), col);

@@ -622,7 +622,7 @@ private:
     const Def* j_wrap(const Def* def); // 'identity' (except for lambdas, functions, and applications) traversal annotating the pullbacks
     const Def* j_wrap_convert(const Def* def);
     const Def* j_wrap_rop(ROp op, const Def* a, const Def* b); // pullback computation for predefined functions, specifically operations like +, -, *, /
-    const Def* j_wrap_mop(MOp op, const Def* a, const Def* b);
+    const Def* j_wrap_mop(MOp op, const Def* args);
     void derive_external( const Lam* fun, Lam* pb, Lam* fw, Lam* res_lam);
     void derive_numeric(const Lam *fun, Lam *source, const Def *target, Lam *fw, const Def* fx, const Def* s, r32 delta);
 
@@ -1286,12 +1286,12 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
 
     if (auto mop = isa<Tag::MOp>(def)) {
         auto ab = j_wrap(mop->arg());
-        auto [mem, a, b] = ab->projs<3>();
-        if(!pullbacks_.count(a)) {
+        //
+        /*if(!pullbacks_.count(a)) {
             pullbacks_[a] = extract_pb(a,ab);
             pullbacks_[b] = extract_pb(b,ab);
-        }
-        auto dst = j_wrap_mop(MOp(mop.flags()), a, b);
+        }*/
+        auto dst = j_wrap_mop(MOp(mop.flags()), ab);
         return dst;
     }
     // conditionals are transformed by the identity (no pullback needed)
@@ -1904,72 +1904,146 @@ const Def* AutoDiffer::j_wrap_rop(ROp op, const Def* a, const Def* b) {
     return dst;
 }
 
-const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* a, const Def* b) {
-// build up pullback type for this expression
-    auto o_type = a->type(); // type of the operation
-    auto pbpi = createPbType(A,o_type);
-    auto pbT = pullbacks_[a]->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
-    auto pb = world_.nom_filter_lam(pbpi, world_.dbg("phi_"));
+const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
 
-    // shortened pullback type => takes pullback result (A) And continues
-    // always expand operation pullbacks
-    auto middle = world_.nom_filter_lam(pbT, world_.dbg("phi_middle"));
-    auto end = world_.nom_filter_lam(pbT, world_.dbg("phi_end"));
-
-    // constant for calculations
-    // Grab argument pullbacks
-    assert(pullbacks_.count(a) && "Pullbacks for MOp arguments should already be created");
-    assert(pullbacks_.count(b) && "Pullbacks for MOp arguments should already be created");
-    // pullbacks of the arguments
-    auto apb = pullbacks_[a];
-    auto bpb = pullbacks_[b];
+    Lam *pb;
     const Def* dst;
 
-    switch (op) {
-        case MOp::add: {
-            auto [dst_mem, dst_mat] = world_.op(MOp::add, RMode::none, current_mem, a, b)->projs<2>();
+    if(op == MOp::transpose || op == MOp::sum ){
+        auto [mem, a] = args->projs<2>();
+
+
+        if(op == MOp::transpose){
+            auto pbpi = createPbType(A,a->type());
+
+            assert(pullbacks_.count(a) && "Pullbacks for MOp arguments should already be created");
+            // pullbacks of the arguments
+            auto apb = pullbacks_[a];
+            auto pbTa = apb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
+            pb = world_.nom_filter_lam(pbpi, world_.dbg("phi_"));
+
+            auto [dst_mem, dst_mat] = world_.unary_op(MOp::transpose, RMode::none, current_mem, a)->projs<2>();
             current_mem = dst_mem;
             dst = dst_mat;
-            pb->set_dbg(world_.dbg(pb->name() + "+"));
-            pb->set_body(world_.app(apb, {pb->mem_var(), pb->var(1), middle}));
-            middle->set_body(world_.app(bpb, {middle->mem_var(), pb->var(1), end}));
-            break;
-        }
-        case MOp::sub: {
-            auto [dst_mem, dst_mat] = world_.op(MOp::add, RMode::none, current_mem, a, b)->projs<2>();
+
+            auto [stencil_mem, stencil_mat] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(), pb->var(1) )->projs<2>();
+            pb->set_body(world_.app(apb, {stencil_mem, stencil_mat, pb->ret_var()}));
+        }else{
+            auto pbpi = createPbType(A, world_.type_real(64));
+
+            assert(pullbacks_.count(a) && "Pullbacks for MOp arguments should already be created");
+            // pullbacks of the arguments
+            auto apb = pullbacks_[a];
+            auto pbTa = apb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
+            pb = world_.nom_filter_lam(pbpi, world_.dbg("phi_"));
+
+            auto [dst_mem, dst_sum] = world_.unary_op(MOp::sum, RMode::none, current_mem, a)->projs<2>();
             current_mem = dst_mem;
-            dst = dst_mat;
-            pb->set_dbg(world_.dbg(pb->name() + "+"));
-            pb->set_body(world_.app(apb, {pb->mem_var(), pb->var(1), middle}));
+            dst = dst_sum;
+            auto rows = world_.extract(a, (u64)1);
+            auto cols = world_.extract(a, (u64)1);
 
-            auto [negate_mem, negate_mat] = world_.op(MOp::smul, RMode::none, middle->mem_var(), world_.lit_real(64, -1.0), pb->var(1))->projs<2>();
-            middle->set_body(world_.app(bpb, {negate_mem, negate_mat, end}));
-            break;
+            auto [stencil_mem, stencil_mat] = world_.op_create_matrix(world_.type_real(64), {rows, cols}, pb->mem_var(), pb->var(1) )->projs<2>();
+            pb->set_body(world_.app(apb, {stencil_mem, stencil_mat, pb->ret_var()}));
         }
-        case MOp::mul: {
-            auto [dst_mem, dst_mat] = world_.op(MOp::mul, RMode::none, current_mem, a, b)->projs<2>();
-            current_mem = dst_mem;
-            dst = dst_mat;
-            pb->set_dbg(world_.dbg(pb->name() + "+"));
+    }else if(op == MOp::map){
+        auto pbpi = createPbType(A, world_.type_real(64));
 
-            auto [transpose_a_mem, transpose_a] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(), a)->projs<2>();
-            auto [left_diff_mem, left_diff_mat] = world_.op(MOp::mul, RMode::none, transpose_a_mem, transpose_a, pb->var(1))->projs<2>();
-            pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
+        pbpi->type();
+    }else{
+        auto [mem, a, b] = args->projs<3>();
 
-            auto [transpose_b_mem, transpose_b] = world_.unary_op(MOp::transpose, RMode::none, middle->mem_var(),  b)->projs<2>();
-            auto [right_diff_mem, right_diff_mat] = world_.op(MOp::mul, RMode::none, transpose_b_mem, pb->var(1), transpose_b)->projs<2>();
-            middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
-            break;
+        // build up pullback type for this expression
+        auto o_type = b->type(); // type of the operation
+        auto pbpi = createPbType(A,o_type);
+
+        assert(pullbacks_.count(a) && "Pullbacks for MOp arguments should already be created");
+        assert(pullbacks_.count(b) && "Pullbacks for MOp arguments should already be created");
+        // pullbacks of the arguments
+        auto apb = pullbacks_[a];
+        auto bpb = pullbacks_[b];
+
+        auto pbT = bpb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
+        pb = world_.nom_filter_lam(pbpi, world_.dbg("phi_"));
+
+        // shortened pullback type => takes pullback result (A) And continues
+        // always expand operation pullbacks
+        auto middle = world_.nom_filter_lam(pbT, world_.dbg("phi_middle"));
+        auto end = world_.nom_filter_lam(pbT, world_.dbg("phi_end"));
+
+        // constant for calculations
+        // Grab argument pullbacks
+
+        switch (op) {
+            case MOp::add: {
+                auto [dst_mem, dst_mat] = world_.op(MOp::add, RMode::none, current_mem, a, b)->projs<2>();
+                current_mem = dst_mem;
+                dst = dst_mat;
+                pb->set_dbg(world_.dbg(pb->name() + "+"));
+                pb->set_body(world_.app(apb, {pb->mem_var(), pb->var(1), middle}));
+                middle->set_body(world_.app(bpb, {middle->mem_var(), pb->var(1), end}));
+                break;
+            }
+            case MOp::sub: {
+                auto [dst_mem, dst_mat] = world_.op(MOp::add, RMode::none, current_mem, a, b)->projs<2>();
+                current_mem = dst_mem;
+                dst = dst_mat;
+                pb->set_dbg(world_.dbg(pb->name() + "-"));
+                pb->set_body(world_.app(apb, {pb->mem_var(), pb->var(1), middle}));
+
+                auto [negate_mem, negate_mat] = world_.op(MOp::smul, RMode::none, middle->mem_var(), world_.lit_real(64, -1.0), pb->var(1))->projs<2>();
+                middle->set_body(world_.app(bpb, {negate_mem, negate_mat, end}));
+                break;
+            }
+            case MOp::mul: {
+                auto [dst_mem, dst_mat] = world_.op(MOp::mul, RMode::none, current_mem, a, b)->projs<2>();
+                current_mem = dst_mem;
+                dst = dst_mat;
+                pb->set_dbg(world_.dbg(pb->name() + "*"));
+
+                auto [transpose_a_mem, transpose_a] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(), a)->projs<2>();
+                auto [left_diff_mem, left_diff_mat] = world_.op(MOp::mul, RMode::none, transpose_a_mem, transpose_a, pb->var(1))->projs<2>();
+                pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
+
+                auto [transpose_b_mem, transpose_b] = world_.unary_op(MOp::transpose, RMode::none, middle->mem_var(),  b)->projs<2>();
+                auto [right_diff_mem, right_diff_mat] = world_.op(MOp::mul, RMode::none, transpose_b_mem, pb->var(1), transpose_b)->projs<2>();
+                middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
+                break;
+            }
+            case MOp::sadd: {
+                auto [dst_mem, dst_mat] = world_.op(MOp::sadd, RMode::none, current_mem, a, b)->projs<2>();
+                current_mem = dst_mem;
+                dst = dst_mat;
+                pb->set_dbg(world_.dbg(pb->name() + "+"));
+
+                auto [sum_mem, sum_mat] = world_.unary_op(MOp::sum, RMode::none, pb->mem_var(), pb->var(1))->projs<2>();
+                pb->set_body(world_.app(apb, {sum_mem, sum_mat, middle}));
+                middle->set_body(world_.app(bpb, {middle->mem_var(), pb->var(1), end}));
+                break;
+            }
+            case MOp::ssub: {
+                auto [dst_mem, dst_mat] = world_.op(MOp::sadd, RMode::none, current_mem, a, b)->projs<2>();
+                current_mem = dst_mem;
+                dst = dst_mat;
+                pb->set_dbg(world_.dbg(pb->name() + "+"));
+
+                auto [sum_mem, sum_mat] = world_.unary_op(MOp::sum, RMode::none, pb->mem_var(), pb->var(1))->projs<2>();
+                pb->set_body(world_.app(apb, {sum_mem, sum_mat, middle}));
+
+                auto [negate_mem, negate_mat] = world_.op(MOp::smul, RMode::none, middle->mem_var(), world_.lit_real(64, -1.0), pb->var(1))->projs<2>();
+                middle->set_body(world_.app(bpb, {negate_mem, negate_mat, end}));
+                break;
+            }
+            default:
+                THORIN_UNREACHABLE;
         }
-        default:
-            // only +, -, *, / are implemented as basic operations
-            THORIN_UNREACHABLE;
+
+        auto adiff = world_.tuple(vars_without_mem_cont(middle));
+        auto bdiff = world_.tuple(vars_without_mem_cont(end));
+        auto sum_pb=vec_add(world_,adiff,bdiff,pb->ret_var());
+        end->set_body(world_.app(sum_pb, end->mem_var()));
     }
 
-    auto adiff = world_.tuple(vars_without_mem_cont(middle));
-    auto bdiff = world_.tuple(vars_without_mem_cont(end));
-    auto sum_pb=vec_add(world_,adiff,bdiff,pb->ret_var());
-    end->set_body(world_.app(sum_pb, end->mem_var()));
     auto result = world_.tuple({current_mem, dst});
     pullbacks_[result] = pb;
     return result;

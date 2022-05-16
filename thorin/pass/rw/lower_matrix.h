@@ -23,7 +23,8 @@ public:
     const Def* rewrite_rec(const Def* current);
     const Def* rewrite_rec_convert(const Def* current);
     const Lam* create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type, const Def* rmode);
-    void construct_loop(Lam* entry, const Def* elem_type, const Def* a_rows, const Def* b_cols, bool invert_alloc, ConstructResult& constructResult);
+    void construct_mat_loop(Lam* entry, const Def* elem_type, const Def* a_rows, const Def* b_cols, const Def* alloc_rows, const Def* alloc_cols, ConstructResult& constructResult);
+    void construct_scalar_loop(Lam* entry, const Def* elem_type, const Def* a_rows, const Def* b_cols, ConstructResult& constructResult);
     void construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def* elem_type, const Def* cols, ConstructResult& constructResult);
 
     const Def* currentMem;

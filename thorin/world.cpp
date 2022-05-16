@@ -139,6 +139,23 @@ World::World(std::string_view name)
 
             CODE(MOp, transpose)
         }
+        {
+            auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
+            auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
+            auto real_w = type_mat(c, w);
+            ty->set_codom(pi({mem, real_w}, sigma({mem, w})));
+
+            CODE(MOp, sum)
+        }
+        {
+            auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
+            auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
+            auto real_w = type_mat(c, w);
+            auto lam = cn_mem_ret(w, w);
+            ty->set_codom(pi({mem, lam, real_w}, sigma({mem, real_w})));
+
+            CODE(MOp, map)
+        }
     }
     { // ICmp: w: nat -> [int w, int w] -> bool
         auto ty    = nom_pi(type())->set_dom(nat);
@@ -1098,7 +1115,8 @@ const Def* World::params_without_return_continuation(const Pi* pi) {
     return sigma(pi->dom()->ops().skip_front().skip_back());
 }
 
-const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, bool zero_init){
+
+const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, const Def* init_def){
     const Def* arr_size = nullptr;
     DefVec conv_defs;
     for( auto& dim_size : dims ){
@@ -1120,15 +1138,24 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
     auto [alloc_mem, arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
     const Def* result_mem = alloc_mem;
 
-    if(zero_init){
+    if(init_def != nullptr){
         auto size_nat = op_bitcast(type_nat(), arr_size);
-        auto body_lit = lit_real(64, 0.0);
-        auto init = pack(size_nat, body_lit);
+        auto init = pack(size_nat, init_def);
+        init_def->type()->dump();
+        init_def->dump();
         result_mem = op_store(result_mem, arr, init);
     }
 
     arr = op_bitcast(ptr_unknows_size, arr);
     return tuple({result_mem, mat(type_mat(dims.size(), elem_type), arr, conv_defs)});
+}
+
+const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, bool zero_init){
+    const Def* init = nullptr;
+    if(zero_init){
+        init = lit_real(64, 0.0);
+    }
+    return op_create_matrix(elem_type, dims, mem, init);
 }
 
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg){
