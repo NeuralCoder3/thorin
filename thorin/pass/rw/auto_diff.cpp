@@ -1284,11 +1284,6 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
 
     if (auto mop = isa<Tag::MOp>(def)) {
         auto ab = j_wrap(mop->arg());
-        //
-        /*if(!pullbacks_.count(a)) {
-            pullbacks_[a] = extract_pb(a,ab);
-            pullbacks_[b] = extract_pb(b,ab);
-        }*/
         auto dst = j_wrap_mop(MOp(mop.flags()), ab);
         return dst;
     }
@@ -1298,14 +1293,6 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto [a, b] = ab->projs<2>();
         auto dst = world_.op(RCmp(rcmp.flags()), nat_t(0), a, b);
         return dst;
-    }
-
-    if(auto rcmp = isa<Tag::MOp>(def)) {
-        auto ab = j_wrap(rcmp->arg());
-        auto [a, b] = ab->projs<2>();
-        auto [out_mem, mat] = world_.op(MOp(rcmp.flags()), nat_t(0), current_mem, a, b)->projs<2>();
-        current_mem = out_mem;
-        return mat;
     }
 
     if (auto div = isa<Tag::Div>(def)) {
@@ -1899,40 +1886,34 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
     if(op == MOp::transpose || op == MOp::sum ){
         auto [mem, a] = args->projs<2>();
 
+        auto pbpi = createPbType(A,a->type());
 
+        assert(pullbacks_.count(a) && "Pullbacks for MOp arguments should already be created");
+        // pullbacks of the arguments
+        auto apb = pullbacks_[a];
+        auto pbTa = apb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
+        pb = world_.nom_filter_lam(pbpi, world_.dbg("phi_"));
+
+        auto [dst_mem, res] = world_.unary_op(op, RMode::none, current_mem, a)->projs<2>();
+        current_mem = dst_mem;
+        dst=res;
+
+        const Def* stencil_mem;
+        const Def* stencil_mat;
         if(op == MOp::transpose){
-            auto pbpi = createPbType(A,a->type());
-
-            assert(pullbacks_.count(a) && "Pullbacks for MOp arguments should already be created");
-            // pullbacks of the arguments
-            auto apb = pullbacks_[a];
-            auto pbTa = apb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
-            pb = world_.nom_filter_lam(pbpi, world_.dbg("phi_"));
-
-            auto [dst_mem, dst_mat] = world_.unary_op(MOp::transpose, RMode::none, current_mem, a)->projs<2>();
-            current_mem = dst_mem;
-            dst = dst_mat;
-
-            auto [stencil_mem, stencil_mat] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(), pb->var(1) )->projs<2>();
-            pb->set_body(world_.app(apb, {stencil_mem, stencil_mat, pb->ret_var()}));
+            // maybe use std::tie
+            auto [_stencil_mem, _stencil_mat] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(), pb->var(1) )->projs<2>();
+            stencil_mat=_stencil_mat;
+            stencil_mem=_stencil_mem;
         }else{
-            auto pbpi = createPbType(A, world_.type_real(64));
-
-            assert(pullbacks_.count(a) && "Pullbacks for MOp arguments should already be created");
-            // pullbacks of the arguments
-            auto apb = pullbacks_[a];
-            auto pbTa = apb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
-            pb = world_.nom_filter_lam(pbpi, world_.dbg("phi_"));
-
-            auto [dst_mem, dst_sum] = world_.unary_op(MOp::sum, RMode::none, current_mem, a)->projs<2>();
-            current_mem = dst_mem;
-            dst = dst_sum;
             auto rows = world_.extract(a, (u64)1);
             auto cols = world_.extract(a, (u64)1);
 
-            auto [stencil_mem, stencil_mat] = world_.op_create_matrix(world_.type_real(64), {rows, cols}, pb->mem_var(), pb->var(1) )->projs<2>();
-            pb->set_body(world_.app(apb, {stencil_mem, stencil_mat, pb->ret_var()}));
+            auto [_stencil_mem, _stencil_mat] = world_.op_create_matrix(world_.type_real(64), {rows, cols}, pb->mem_var(), pb->var(1) )->projs<2>();
+            stencil_mat=_stencil_mat;
+            stencil_mem=_stencil_mem;
         }
+        pb->set_body(world_.app(apb, {stencil_mem, stencil_mat, pb->ret_var()}));
     }else if(op == MOp::map){
         auto pbpi = createPbType(A, world_.type_real(64));
 
@@ -1961,6 +1942,7 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
         // constant for calculations
         // Grab argument pullbacks
 
+        // TODO: extract common code
         switch (op) {
             case MOp::add: {
                 auto [dst_mem, dst_mat] = world_.op(MOp::add, RMode::none, current_mem, a, b)->projs<2>();
