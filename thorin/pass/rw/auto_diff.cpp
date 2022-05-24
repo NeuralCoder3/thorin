@@ -460,7 +460,8 @@ std::pair<const Def*,const Def*> lit_of_type(World& world, const Def* mem, const
         auto elem_type = mat->arg(1);
         auto rows = world.extract(like, (u64) 1);
         auto cols = world.extract(like, (u64) 2);
-        auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, {rows, cols}, mem, lit)->projs<2>();
+        auto [elem_mem, body_lit] = lit_of_type(world,mem,elem_type,nullptr,lit,dummy);
+        auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, {rows, cols}, elem_mem, body_lit)->projs<2>();
         return {alloc_mem, new_mat};
     }
 
@@ -871,8 +872,15 @@ const Def* AutoDiffer::reverse_diff(Lam* src) {
         pullbacks_[dvar] = extract;
         initArg(dvar);
     }
+
     // translate the body => get correct applications of variables using pullbacks
-    auto dst = j_wrap(src->body());
+    const Def* dst;
+    if(src->is_set()){
+        dst = j_wrap(src->body());
+    }else{
+
+    }
+
     return dst;
 }
 
@@ -2030,12 +2038,12 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
                 dst = dst_mat;
                 pb->set_dbg(world_.dbg(pb->name() + "mul"));
 
-                auto [transpose_a_mem, transpose_a] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(), a)->projs<2>();
-                auto [left_diff_mem, left_diff_mat] = world_.op(MOp::mul, RMode::none, transpose_a_mem, transpose_a, pb->var(1))->projs<2>();
+                auto [transpose_b_mem, transpose_b] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(),  b)->projs<2>();
+                auto [left_diff_mem, left_diff_mat] = world_.op(MOp::mul, RMode::none, transpose_b_mem, pb->var(1), transpose_b)->projs<2>();
                 pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
 
-                auto [transpose_b_mem, transpose_b] = world_.unary_op(MOp::transpose, RMode::none, middle->mem_var(),  b)->projs<2>();
-                auto [right_diff_mem, right_diff_mat] = world_.op(MOp::mul, RMode::none, transpose_b_mem, pb->var(1), transpose_b)->projs<2>();
+                auto [transpose_a_mem, transpose_a] = world_.unary_op(MOp::transpose, RMode::none, middle->mem_var(), a)->projs<2>();
+                auto [right_diff_mem, right_diff_mat] = world_.op(MOp::mul, RMode::none, transpose_a_mem, transpose_a, pb->var(1))->projs<2>();
                 middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
                 break;
             }
@@ -2073,6 +2081,20 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
 
                 auto [negate_mem, negate_mat] = world_.op(MOp::smul, RMode::none, middle->mem_var(), world_.lit_real(64, -1.0), pb->var(1))->projs<2>();
                 middle->set_body(world_.app(bpb, {negate_mem, negate_mat, end}));
+                break;
+            }
+            case MOp::smul: {
+                auto [dst_mem, dst_mat] = world_.op(MOp::smul, RMode::none, current_mem, a, b)->projs<2>();
+                current_mem = dst_mem;
+                dst = dst_mat;
+                pb->set_dbg(world_.dbg(pb->name() + "scalar_mul"));
+
+                auto [emul_mem, emul_mat] = world_.op(MOp::emul, RMode::none, pb->mem_var(), b, pb->var(1))->projs<2>();
+                auto [sum_mem, sum_mat] = world_.unary_op(MOp::sum, RMode::none, emul_mem, emul_mat)->projs<2>();
+                pb->set_body(world_.app(apb, {sum_mem, sum_mat, middle}));
+
+                auto [scaled_mem, scaled_mat] = world_.op(MOp::smul, RMode::none, middle->mem_var(), a, pb->var(1))->projs<2>();
+                middle->set_body(world_.app(bpb, {scaled_mem, scaled_mat, end}));
                 break;
             }
             default:

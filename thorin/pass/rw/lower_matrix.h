@@ -16,9 +16,9 @@ struct ConstructResult{
 
 struct Helper{
     const Def* currentMem;
-    Lam* head = nullptr;
+    //Lam* head = nullptr;
     Lam* tail = nullptr;
-    Lam* exit = nullptr;
+    //Lam* exit = nullptr;
 };
 
 class LowerMatrix : public RWPass<Lam> {
@@ -34,8 +34,8 @@ public:
     void construct_scalar_loop(Lam* entry, const Def* elem_type, const Def* a_rows, const Def* b_cols, ConstructResult& constructResult);
     void construct_void_loop(Lam* entry, const Def* rows, const Def* cols, ConstructResult& constructResult);
     void construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def* elem_type, const Def* cols, ConstructResult& constructResult);
-    Lam* rewrite_mop(const App* app, Lam* enter, const Def* arg_wrap);
-    Lam* rewrite_map(const App* app, Lam* enter, const Def* arg_wrap);
+    Lam* rewrite_mop(const App* app, const Def* arg_wrap);
+    Lam* rewrite_map(const App* app, const Def* arg_wrap);
     const Def* alloc_stencil(const Def* stencil, const Def* rows, const Def* cols,  const Def*& mem);
     const Def* rewrite_app(const App* app);
     void store_rec(const Def* value, const Def* mat, const Def* index, const Def*& mem);
@@ -43,7 +43,7 @@ public:
     Helper helper;
 
     Def2Def old2new;
-    DefMap<const Lam*> mop_variants;
+    DefMap<Lam*> mop_variants;
 };
 
     //Def2Def old2new_;

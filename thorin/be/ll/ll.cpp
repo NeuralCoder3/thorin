@@ -125,6 +125,7 @@ std::string CodeGen::convert(const Def* type) {
                 // clang-format off
                 case  1: return types_[type] = "i1";
                 case  2:
+                case  3:
                 case  4:
                 case  8: return types_[type] = "i8";
                 case 16: return types_[type] = "i16";
@@ -423,6 +424,7 @@ std::string CodeGen::emit_bb(BB& bb, const Def* def) {
                     // clang-format off
                     case  1: return std::to_string(lit->get< u1>());
                     case  2:
+                    case  3:
                     case  4:
                     case  8: return std::to_string(lit->get< u8>());
                     case 16: return std::to_string(lit->get<u16>());

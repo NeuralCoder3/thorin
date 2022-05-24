@@ -80,6 +80,7 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
 
     switch (mop) {
         case MOp::mul: {
+            entry->set_dbg(world().dbg("mop_mul"));
             auto [result_ptr, result_rows, result_cols] = constructResult.result_matrix->projs<3>();
 
             auto a = entry->var(1);
@@ -133,9 +134,9 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
         case MOp::emul: {
             Op op_ty;
             switch (mop) {
-                case MOp::add: op_ty = Op::add; break;
-                case MOp::sub: op_ty = Op::sub; break;
-                case MOp::emul: op_ty = Op::mul; break;
+                case MOp::add: entry->set_dbg(world().dbg("mop_add")); op_ty = Op::add; break;
+                case MOp::sub: entry->set_dbg(world().dbg("mop_sub")); op_ty = Op::sub; break;
+                case MOp::emul: entry->set_dbg(world().dbg("mop_emul")); op_ty = Op::mul; break;
                 default: thorin::unreachable();
             }
 
@@ -167,9 +168,9 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
         case MOp::ssub: {
             Op op_ty;
             switch (mop) {
-                case MOp::sadd:  op_ty = Op::add; break;
-                case MOp::smul: op_ty = Op::mul; break;
-                case MOp::ssub: op_ty = Op::sub; break;
+                case MOp::sadd: entry->set_dbg(world().dbg("mop_sadd")); op_ty = Op::add; break;
+                case MOp::smul: entry->set_dbg(world().dbg("mop_smul")); op_ty = Op::mul; break;
+                case MOp::ssub: entry->set_dbg(world().dbg("mop_ssub")); op_ty = Op::sub; break;
                 default: thorin::unreachable();
             }
 
@@ -190,6 +191,7 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
             break;
         }
         case MOp::transpose: {
+            entry->set_dbg(world().dbg("mop_transpose"));
             auto [result_ptr, result_rows, result_cols] = constructResult.result_matrix->projs<3>();
 
             auto b = entry->var(1);
@@ -208,6 +210,7 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
             break;
         }
         case MOp::sum: {
+            entry->set_dbg(world().dbg("mop_sum"));
             auto result = constructResult.result_matrix;
             auto b = entry->var(1);
             auto [b_ptr, b_rows, b_cols] = b->projs<3>();
@@ -221,9 +224,9 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
             break;
         }
         case MOp::init: {
-            auto result = constructResult.result_matrix;
-            auto mat = entry->var(2);
+            entry->set_dbg(world().dbg("mop_init"));
             auto value = entry->var(1);
+            auto mat = entry->var(2);
             auto [ptr, _rows, _cols] = mat->projs<3>();
 
             auto src_index = w.row_col_to_index(left_row_index, right_col_index, cols);
@@ -465,7 +468,7 @@ const Def* LowerMatrix::rewrite_rec(const Def* current, bool convert){
     return result;
 }
 
-Lam* LowerMatrix::rewrite_mop(const App* app, Lam* enter, const Def* arg_wrap){
+Lam* LowerMatrix::rewrite_mop(const App* app, const Def* arg_wrap){
     auto mop_app = app->callee()->as<App>();
     auto mop_axiom = mop_app->callee()->as<Axiom>();
 
@@ -482,8 +485,8 @@ Lam* LowerMatrix::rewrite_mop(const App* app, Lam* enter, const Def* arg_wrap){
         res_buil.type_matrix(2, elem_type);
     }
 
-    auto result_lam = res_buil.nom_filter_lam("mat_mul_res");
-    builder.flatten(arg_wrap).add(result_lam).app_body(enter, mop_lam);
+    auto result_lam = res_buil.nom_filter_lam("mop_result");
+    builder.flatten(arg_wrap).add(result_lam).app_body(helper.tail, mop_lam);
     return result_lam;
 }
 
@@ -504,7 +507,7 @@ void LowerMatrix::store_rec(const Def* value, const Def* mat, const Def* index, 
 }
 
 
-Lam* LowerMatrix::rewrite_map(const App* app, Lam* enter, const Def* arg_wrap){
+Lam* LowerMatrix::rewrite_map(const App* app, const Def* arg_wrap){
     auto map_app = app->callee()->as<App>();
     auto map_axiom = map_app->callee()->as<Axiom>();
 
@@ -514,87 +517,78 @@ Lam* LowerMatrix::rewrite_map(const App* app, Lam* enter, const Def* arg_wrap){
     auto mat = arg_wrap->op(1);
     auto map_f = arg_wrap->op(2);
 
-    auto elem_type = world().elem_ty_of_mat(mat->type());
+    auto signature = world().tuple({map_axiom, map_f});
 
-    Lam* entry = builder.mem()
-            .type_matrix(2, elem_type)
-            .add(
-                    builder.mem().add(out_type).cn()
-            ).nom_filter_lam("matrix_unary_entry");
+    Lam* entry;
+    if(mop_variants.contains(signature)){
+        entry = mop_variants[signature];
+    }else{
+        auto elem_type = world().elem_ty_of_mat(mat->type());
 
-    auto b = entry->var(1);
-    auto [b_ptr, b_rows, b_cols] = b->projs<3>();
+        entry = builder.mem()
+                .type_matrix(2, elem_type)
+                .add(
+                        builder.mem().add(out_type).cn()
+                ).nom_filter_lam("matrix_unary_entry");
 
-    auto rows = b_rows;
-    auto cols = b_cols;
+        auto b = entry->var(1);
+        auto [b_ptr, b_rows, b_cols] = b->projs<3>();
 
-    ConstructResult constructResult{};
-    construct_mat_loop(entry, out_type, rows, cols, cols, rows, constructResult);
+        auto rows = b_rows;
+        auto cols = b_cols;
 
-    World &w = world();
+        ConstructResult constructResult{};
+        construct_mat_loop(entry, out_type, rows, cols, cols, rows, constructResult);
 
-    auto left_row_index = constructResult.left_row_index;
-    auto right_col_index = constructResult.right_col_index;
-    auto body = constructResult.body;
-    auto result_matrix = constructResult.result_matrix;
+        World &w = world();
 
-
-    auto src_index = w.row_col_to_index(left_row_index, right_col_index, cols);
-    auto src_ptr = w.op_lea(b_ptr, src_index);
-    auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), src_ptr)->projs<2>();
-
-    auto f_type = map_f->type()->as<Pi>();
-    auto map_result_lam = world().nom_filter_lam(f_type->doms().back()->as<Pi>(), world().lit_bool(false), world().dbg(""));
-
-    auto store_mem = map_result_lam->mem_var();
-    store_rec(world().tuple(map_result_lam->vars().skip_front()), result_matrix, src_index, store_mem);
+        auto left_row_index = constructResult.left_row_index;
+        auto right_col_index = constructResult.right_col_index;
+        auto body = constructResult.body;
+        auto result_matrix = constructResult.result_matrix;
 
 
-    map_result_lam->set_body(world().app(body->ret_var(), store_mem));
-    builder.add(right_load_mem).add(right_value).add(map_result_lam).app_body(body, map_f);
+        auto src_index = w.row_col_to_index(left_row_index, right_col_index, cols);
+        auto src_ptr = w.op_lea(b_ptr, src_index);
+        auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), src_ptr)->projs<2>();
+
+        auto f_type = map_f->type()->as<Pi>();
+        auto map_result_lam = world().nom_filter_lam(f_type->doms().back()->as<Pi>(), world().lit_bool(false), world().dbg(""));
+
+        auto store_mem = map_result_lam->mem_var();
+        store_rec(world().tuple(map_result_lam->vars().skip_front()), result_matrix, src_index, store_mem);
+
+
+        map_result_lam->set_body(world().app(body->ret_var(), store_mem));
+        builder.add(right_load_mem).add(right_value).add(map_result_lam).app_body(body, map_f);
+
+        mop_variants[signature] = entry;
+    }
 
     auto result_lam = builder.mem()
             .add(out_type)
             .nom_filter_lam("mat_mul_res");
-
-    builder.add(mem).add(mat).add(result_lam).app_body(enter, entry);
+    builder.add(mem).add(mat).add(result_lam).app_body(helper.tail, entry);
     return result_lam;
 }
 
 const Def* LowerMatrix::rewrite_app(const App* app){
-    auto enter = builder.mem().nom_filter_lam("enter_mop");
-    auto exit = builder.mem().nom_filter_lam("exit_mop");
-    if(helper.tail == nullptr){
-        helper.exit = exit;
-    }else{
-        builder.mem(exit).app_body(exit, helper.tail);
-    }
-    helper.tail = enter;
-
     auto arg = app->arg();
-    helper.currentMem = enter->mem_var();
     auto arg_wrap = rewrite_rec(arg);
 
     Lam* result_lam;
     if(isa<Tag::MOp>(app)){
-        result_lam = rewrite_mop(app, enter, arg_wrap);
+        result_lam = rewrite_mop(app, arg_wrap);
     }else if(isa<Tag::Map>(app)){
-        result_lam = rewrite_map(app, enter, arg_wrap);
+        result_lam = rewrite_map(app, arg_wrap);
     }else{
         thorin::unreachable();
     }
 
-    builder.mem(result_lam).app_body(result_lam, exit);
+    helper.tail = result_lam;
+    helper.currentMem = result_lam->mem_var();
 
-    if(helper.head == nullptr){
-        helper.head = enter;
-    }
-
-    helper.currentMem = exit->mem_var();
-    auto result = result_lam->var();
-    auto result_tuple = builder.mem(exit).add(result->projs().skip_front()).tuple();
-
-    return result_tuple;
+    return result_lam->var();
 }
 
 const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
@@ -603,28 +597,34 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
 
         helper = {
             .currentMem = lam->mem_var(),
-            .head = nullptr,
-            .tail = nullptr,
-            .exit = lam
+            .tail = lam,
         };
 
         lam->dump();
-        auto root = lam->body();
-        auto result = rewrite_rec(root);
+        auto result = rewrite_rec(lam->body());
 
-        helper.exit->dump();
-        helper.exit->set_body(result);
-        if(helper.head != nullptr){
-            builder.mem(lam).app_body(lam, helper.head);
-        }
-
+        helper.tail->set_body(result);
         helper = oldHelper;
         return lam;
     }else if (isa<Tag::MOp>(current) || isa<Tag::Map>(current)) {
         return rewrite_app(current->as<App>());
-    }else /*else if(auto mat = isa<Tag::Mat>(current->type())){
-        return current->rebuild(world(), mat->type(), mat->ops().map([&](auto elem, auto){return rewrite_rec(elem);}), mat->dbg());
-    }else */if(auto app = current->isa<App>()){
+    }else if(auto mat = isa<Tag::Mat>(current->type())){
+        return current->rebuild(world(), current->type(), current->ops().map([&](auto elem, auto){return rewrite_rec(elem);}), mat->dbg());
+    }else if(auto arr = current->isa<Arr>()){
+        auto size = rewrite_rec(arr->op(0));
+        auto type = rewrite_rec(arr->op(1));
+        return world().arr(size, type);
+    }else if(auto alloc = isa<Tag::Alloc>(current)){
+        auto mem = rewrite_rec(alloc->arg());
+        auto callee = alloc->callee()->as<App>();
+        auto arr = rewrite_rec(callee->arg(0));
+        return world().op_malloc(arr, mem);
+    }else if(auto bitcast = isa<Tag::Bitcast>(current)){
+        auto rewritten_arg = rewrite_rec(bitcast->arg());
+        auto callee = bitcast->callee()->as<App>();
+        auto dst_type = callee->arg(0);
+        return world().op_bitcast(dst_type, rewritten_arg);
+    }else if(auto app = current->isa<App>()){
         auto arg = app->arg();
         auto args_rewritten = rewrite_rec(arg);
         auto arg_proj = args_rewritten->projs();
@@ -632,13 +632,9 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         const Def* app_wrap;
         callee->dump();
         if(is_memop(current)){
-            arg_proj.front() = helper.currentMem;
             app_wrap = world().app(callee, arg_proj);
-            helper.currentMem = app_wrap->proj(0);
         }else if(auto lam = callee->isa_nom<Lam>()){
-            arg_proj.front() = helper.currentMem;
             return world().app(rewrite_rec(lam), arg_proj);
-            helper.currentMem = app_wrap->proj(0);
         }else{
             app_wrap = world().app(callee, arg_proj);
         }
@@ -663,24 +659,18 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         return var;
     }
 
+    current->dump();
     return current;
 }
 
 void LowerMatrix::enter() {
-    rewrite_rec(curr_nom());
-    /*
-    head = nullptr;
-    tail = nullptr;
-    exit = curr_nom();
-    currentMem = curr_nom()->mem_var();
+    helper = {
+        .currentMem = curr_nom()->mem_var(),
+        .tail = curr_nom(),
+    };
 
-    auto root = curr_nom()->body();
-    auto result = rewrite_rec(root);
-
-    exit->set_body(result);
-    if(head != nullptr){
-        builder.mem(curr_nom()).app_body(curr_nom(), head);
-    }*/
+    auto result = rewrite_rec(curr_nom()->body());
+    helper.tail->set_body(result);
 }
 
 
