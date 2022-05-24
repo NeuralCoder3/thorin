@@ -1939,9 +1939,9 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
             auto pbTa = apb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
             pb = world_.nom_filter_lam(pbpi, world_.lit_bool(false), world_.dbg("phi_"));
 
-            auto [dst_mem, dst_mat] = world_.unary_op(MOp::transpose, RMode::none, current_mem, a)->projs<2>();
-            current_mem = dst_mem;
-            dst = dst_mat;
+        auto [dst_mem, res] = world_.unary_op(op, RMode::none, current_mem, a)->projs<2>();
+        current_mem = dst_mem;
+        dst=res;
 
             auto [stencil_mem, stencil_mat] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(), pb->var(1) )->projs<2>();
             pb->set_body(world_.app(apb, {stencil_mem, stencil_mat, pb->ret_var()}));
@@ -2011,6 +2011,7 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
         // constant for calculations
         // Grab argument pullbacks
 
+        // TODO: extract common code
         switch (op) {
             case MOp::add: {
                 auto [dst_mem, dst_mat] = world_.op(MOp::add, RMode::none, current_mem, a, b)->projs<2>();
