@@ -152,7 +152,7 @@ public:
     Lam* nom_lam(const Pi* cn, const Def* dbg = {}) { return nom_lam(cn, Lam::CC::C, dbg); }
 
     Lam* nom_filter_lam(const Pi* cn, const Def* dbg){
-        return nom_filter_lam(cn, lit_true(), dbg);
+        return nom_filter_lam(cn, lit_false(), dbg);
     }
 
     Lam* nom_filter_lam(const Pi* cn, const Def* filter, const Def* dbg){
@@ -414,6 +414,7 @@ public:
     const Axiom* ax_remem()       const { return data_.remem_;   }
     const Axiom* ax_slot()        const { return data_.slot_;    }
     const Axiom* ax_store()       const { return data_.store_;   }
+    const Axiom* ax_map()         const { return data_.map_;   }
     // clang-format on
     ///@}
 
@@ -580,6 +581,7 @@ public:
     //@{
     const Def* params_without_return_continuation(const Pi* pi);
     const Def* op_rev_diff(const Def* fn, const Def* dbg = {});
+    const Def* op_map(const Def* mem, const Def* mat, const Def* fn, const Def* dbg = {});
     const Def* op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, bool zero_init = false);
     const Def* op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, const Def* init_def);
     const Def* row_col_to_index( const Def* row, const Def* col, const Def* col_size){
@@ -617,6 +619,7 @@ public:
 
     class Builder{
         std::vector<const Def*> v;
+        bool filter_ = false;
         World* world;
     public:
         Builder(World* world) : world(world){
@@ -639,9 +642,13 @@ public:
         }
 
         Builder& flatten(const Def* def){
-            nat_t size = def->num_projs();
-            for(nat_t i = 0; i < size ; i++ ){
-                v.push_back(def->proj(i));
+            if(def->isa<Sigma>() || def->isa<Tuple>() || def->isa<Var>()){
+                nat_t size = def->num_projs();
+                for(nat_t i = 0; i < size ; i++ ){
+                    v.push_back(def->proj(i));
+                }
+            }else{
+                v.push_back(def);
             }
             return *this;
         }
@@ -715,6 +722,11 @@ public:
             return *this;
         }
 
+        Builder& set_filter(bool filter = true){
+            this->filter_ = filter;
+            return *this;
+        }
+
         const Pi* cn(){
             return world->cn(defs());
         }
@@ -732,7 +744,9 @@ public:
         }
 
         Lam* nom_filter_lam(const std::string& name){
-            return world->nom_filter_lam( cn(), world->dbg(name) );
+            auto lam = nom_lam(name);
+            lam->set_filter(world->lit_bool(filter_));
+            return lam;
         }
 
         Lam* nom_lam(const std::string& name){
@@ -761,8 +775,8 @@ public:
                 .add(extra)
                 .nom_lam("loop_head");
 
-        auto loop = nom_filter_lam(cn(type_mem()),dbg("loop"));
-        auto loop_end = nom_filter_lam(cn(type_mem()),dbg("loop_exit"));
+        auto loop = builder().mem().nom_filter_lam("loop");
+        auto loop_end = builder().mem().nom_filter_lam("loop_exit");
         auto loop_continue = builder().mem().add(extra).nom_filter_lam("loop_continue");
         auto cond = op(ICmp::ul,loop_head->var(1),count);
 
@@ -1086,6 +1100,7 @@ private:
         const Axiom* remem_;
         const Axiom* slot_;
         const Axiom* store_;
+        const Axiom* map_;
         const Axiom* type_int_;
         const Axiom* type_mem_;
         const Axiom* type_ptr_;

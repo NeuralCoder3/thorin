@@ -111,14 +111,7 @@ World::World(std::string_view name)
 
             CODE(MOp, add)
             CODE(MOp, sub)
-        }
-        {
-            auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
-            auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
-            auto mat_left = type_mat(top_nat(), w);
-            auto mat_right = type_mat(c, w);
-            ty->set_codom(pi({mem, mat_left, mat_right}, sigma({mem, mat_right})));
-
+            CODE(MOp, emul)
             CODE(MOp, mul)
         }
         {
@@ -151,11 +144,17 @@ World::World(std::string_view name)
             auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
             auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
             auto real_w = type_mat(c, w);
-            auto lam = cn_mem_ret(w, w);
-            ty->set_codom(pi({mem, lam, real_w}, sigma({mem, real_w})));
+            ty->set_codom(pi({mem, w, real_w}, mem));
 
-            CODE(MOp, map)
+            CODE(MOp, init)
         }
+    }
+    {
+        // Map: [dims: nat, in: *, out: *] -> [mat[] w] -> m64 w
+        auto ty     = nom_pi(type())->set_dom({type(), type(), type()});
+        auto [mat_type, out, f_ty] = ty->vars<3>({dbg("mat_type"), dbg("out_sigma"), dbg("f_pi")});
+        ty ->set_codom(pi({mem, mat_type, f_ty}, sigma({mem, out})));
+        data_.map_ = axiom(nullptr, ty, Tag::Map, 0, dbg("map"));
     }
     { // ICmp: w: nat -> [int w, int w] -> bool
         auto ty    = nom_pi(type())->set_dom(nat);
@@ -417,7 +416,8 @@ const Def* World::tangent_type(const Def* A,bool left) {
                 return tangent_type(ops[i],left);
         }};
         Defs tan_ops{tan_ops_arr};
-        return sigma(tan_ops,sig->dbg());
+        auto result = sigma(tan_ops,sig->dbg());
+        return result;
     }
 
     if(auto mat = isa<Tag::Mat>(A)){
@@ -454,6 +454,10 @@ const Def* World::app(const Def* callee, const Def* arg, const Def* dbg) {
 
     if (err()) {
         if (!checker_->assignable(pi->dom(), arg)){
+            callee->dump();
+            callee->type()->dump();
+            arg->dump();
+            arg->type()->dump();
             err()->ill_typed_app(callee, arg);
         }
     }
@@ -1115,6 +1119,26 @@ const Def* World::params_without_return_continuation(const Pi* pi) {
     return sigma(pi->dom()->ops().skip_front().skip_back());
 }
 
+const Def* World::op_map(const Def* mem, const Def* mat, const Def* fn, const Def* dbg){
+    auto mat_type = mat->type();
+    auto shape_size = dim_count_of_mat(mat_type);
+    auto elem_type = elem_ty_of_mat(mat_type);
+
+    auto pi = fn->type()->as<Pi>();
+    auto return_pi = pi->doms().back()->as<Pi>();
+
+    auto dims = dim_count_of_mat(mat->type());
+
+    DefArray arr{return_pi->num_doms() - 1};
+    size_t i = 0;
+    for(auto ty : return_pi->doms().skip_front()){
+        arr[i] = this->type_mat(dims, ty);
+        i++;
+    }
+
+    auto mapped_return = this->sigma(arr);
+    return app(app(ax_map(), {mat->type(), mapped_return, fn->type()}), {mem, mat, fn}, dbg);
+}
 
 const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, const Def* init_def){
     const Def* arr_size = nullptr;
@@ -1138,14 +1162,16 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
     auto [alloc_mem, arr] = op_alloc(arr_sized_ty, mem)->projs<2>();
     const Def* result_mem = alloc_mem;
 
+    arr = op_bitcast(ptr_unknows_size, arr);
+    auto result_mat = mat(type_mat(dims.size(), elem_type), arr, conv_defs);
+
     if(init_def != nullptr){
-        auto size_nat = op_bitcast(type_nat(), arr_size);
-        auto init = pack(size_nat, init_def);
-        result_mem = op_store(result_mem, arr, init);
+        result_mat->type()->dump();
+        init_def->type()->dump();
+        result_mem = op(MOp::init, RMode::none, result_mem, init_def, result_mat, {} );
     }
 
-    arr = op_bitcast(ptr_unknows_size, arr);
-    return tuple({result_mem, mat(type_mat(dims.size(), elem_type), arr, conv_defs)});
+    return tuple({result_mem, result_mat});
 }
 
 const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, bool zero_init){

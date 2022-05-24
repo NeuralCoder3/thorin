@@ -648,7 +648,7 @@ template<MOp op>
 const Def* normalize_MOp(const Def* type, const Def* c, const Def* arg, const Def* dbg) {
     auto& world = type->world();
     auto callee = c->as<App>();
-    return world.raw_app(callee, arg->ops(), dbg);
+    return world.raw_app(callee, arg, dbg);
 }
 
 template<ROp op>

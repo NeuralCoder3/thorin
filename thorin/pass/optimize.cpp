@@ -33,6 +33,7 @@ void graph_print(std::ofstream& ofs, DefSet& done, const Def* def, int maxDepth)
 
 void optimize(World& world) {
     world.set_log_level(LogLevel::Debug);
+    world.debug_stream();
 
     PassMan::run<Scalerize>(world, nullptr);
     PassMan::run<EtaRed>(world);
@@ -53,6 +54,7 @@ void optimize(World& world) {
 //    ErrorHandler* err;
 //    world.set((std::unique_ptr<ErrorHandler>&&) nullptr);
 
+    PassMan::run<PartialEval>(world);
     PassMan optA(world);
     optA.add<AutoDiff>();
     optA.run();
@@ -79,9 +81,6 @@ void optimize(World& world) {
 //     opt2.add<TailRecElim>(er);
 // //    opt2.run();
     printf("Finished Prepare Opti\n");
-
-    optA.run();
-    printf("Finished AutoDiff Opti\n");
 
 
     PassMan opt(world);

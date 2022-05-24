@@ -155,6 +155,20 @@ public:
         return result;
     }
 
+    template<typename Result = T >
+    Array<Result> filter(std::function<bool(T, size_t)> f){
+        std::vector<Result> vec;
+
+        for (size_t i = 0; i < size(); ++i){
+            auto& val = (*this)[i];
+            if(f(val, i)){
+                vec.push_back(val);
+            }
+        }
+
+        return {vec};
+    }
+
     Array<T> map(std::function<T(T, size_t)> f){
         return map<T>(f);
     }

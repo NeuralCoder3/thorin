@@ -45,6 +45,8 @@ const Def* Matrix2Tuple::rewrite_type(const Def* def) {
 }
 
 const Def* Matrix2Tuple::rewrite_convert(const Def* def) {
+    assert(!isa<Tag::MOp>(def) && !isa<Tag::Map>(def));
+
     if(auto mat = def->isa<Mat>()){
         return world().tuple(mat->ops().map([&](auto elem, auto){return rewrite_cached(elem);}));
     }else if(auto tuple = def->isa<Tuple>()){
@@ -119,6 +121,8 @@ const Def* Matrix2Tuple::rewrite_convert(const Def* def) {
             auto src = bitcast->arg(0);
 
             return world().op_bitcast(rewrite_type_cached(dst_type), rewrite_cached(src));
+        }else if(isa<Tag::Mem>(def->type())) {
+            return def;
         }else{
             return def->rebuild(world(), rewrite_type_cached(def->type()), def->ops().map([&](auto elem, auto){return rewrite_cached(elem);}), def->dbg());
         }

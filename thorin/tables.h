@@ -34,7 +34,7 @@ using nat_t    = u64;
 #define THORIN_TAG(m)                                               \
     m(Mem, mem) m(Int, int) m(Real, real) m(Ptr, ptr)               \
     m(Bit, bit) m(Shr, shr) m(Wrap, wrap) m(Div, div) m(ROp, rop)   \
-    m(MOp, mop) m(Mat, mat)                                         \
+    m(MOp, mop) m(Mat, mat) m(Map, map)                             \
     m(ICmp, icmp) m(RCmp, rcmp)                                     \
     m(Trait, trait) m(Conv, conv) m(PE, pe) m(Acc, acc)             \
     m(Bitcast, bitcast) m(LEA, lea)                                 \
@@ -79,7 +79,7 @@ enum RMode : nat_t {
 /// Floating point (real) operations that take @p RMode.
 #define THORIN_R_OP(m) m(ROp, add) m(ROp, sub) m(ROp, mul) m(ROp, div) m(ROp, rem)
 /// MATRIX floating point (real) operations that take @p RMode.
-#define THORIN_M_OP(m) m(MOp, mul) m(MOp, add) m(MOp, sub) m(MOp, smul) m(MOp, sadd) m(MOp, ssub) m(MOp, transpose) m(MOp, sum) m(MOp, map)
+#define THORIN_M_OP(m) m(MOp, mul) m(MOp, add) m(MOp, sub) m(MOp, emul) m(MOp, smul) m(MOp, sadd) m(MOp, ssub) m(MOp, transpose) m(MOp, sum) m(MOp, init)
 /// Type traits
 #define THORIN_TRAIT(m) m(Trait, size) m(Trait, align)
 /// Conversions
