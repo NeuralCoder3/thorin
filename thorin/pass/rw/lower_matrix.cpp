@@ -71,7 +71,7 @@ const Def* mul_add(World& w, const Def* rmode, const Def* type, const Def* lhs, 
     return op(w, Op::add, rmode, type, op(w, Op::mul, rmode, type, lhs, rhs), carry);
 }
 
-void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def* elem_type, const Def* cols, ConstructResult& constructResult){
+void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def* elem_type, const Def* rows, const Def* cols, ConstructResult& constructResult){
     World& w = world();
 
     auto left_row_index = constructResult.left_row_index;
@@ -198,12 +198,12 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
             auto [b_ptr, b_rows, b_cols] = b->projs<3>();
 
             auto src_index = w.row_col_to_index(left_row_index, right_col_index, cols);
-            auto src_ptr = w.op_lea(b_ptr, src_index);
-            auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), src_ptr)->projs<2>();
+            auto dst_index = w.row_col_to_index(right_col_index, left_row_index, rows);
 
-            auto dst_index = w.row_col_to_index(right_col_index, left_row_index, cols);
+            auto src_ptr = w.op_lea(b_ptr, src_index);
             auto dst_lea = w.op_lea(result_ptr, dst_index);
 
+            auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), src_ptr)->projs<2>();
             auto store_mem = w.op_store(right_load_mem, dst_lea, right_value);
 
             builder.add(store_mem).app_body(body, body->ret_var());
@@ -448,7 +448,7 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
         construct_mat_loop(entry, world().type_mat(2, elem_type), rows, cols, rows, cols, constructResult);
     }
 
-    construct_mop(entry, mop, rmode, elem_type, cols, constructResult);
+    construct_mop(entry, mop, rmode, elem_type, rows, cols, constructResult);
 
     mop_variants[signature] = entry;
     return entry;
