@@ -111,8 +111,9 @@ World::World(std::string_view name)
 
             CODE(MOp, add)
             CODE(MOp, sub)
-            CODE(MOp, emul)
             CODE(MOp, mul)
+            CODE(MOp, div)
+            CODE(MOp, vec)
         }
         {
             auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
@@ -454,10 +455,6 @@ const Def* World::app(const Def* callee, const Def* arg, const Def* dbg) {
 
     if (err()) {
         if (!checker_->assignable(pi->dom(), arg)){
-            callee->dump();
-            callee->type()->dump();
-            arg->dump();
-            arg->type()->dump();
             err()->ill_typed_app(callee, arg);
         }
     }
@@ -1166,8 +1163,6 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
     auto result_mat = mat(type_mat(dims.size(), elem_type), arr, conv_defs);
 
     if(init_def != nullptr){
-        result_mat->type()->dump();
-        init_def->type()->dump();
         result_mem = op(MOp::init, RMode::none, result_mem, init_def, result_mat, {} );
     }
 

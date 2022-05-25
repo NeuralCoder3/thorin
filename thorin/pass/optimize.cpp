@@ -32,7 +32,7 @@ namespace thorin {
 void graph_print(std::ofstream& ofs, DefSet& done, const Def* def, int maxDepth);
 
 void optimize(World& world) {
-    world.set_log_level(LogLevel::Debug);
+    world.set_log_level(LogLevel::Error);
     world.debug_stream();
 
     PassMan::run<Scalerize>(world, nullptr);

@@ -81,7 +81,6 @@ protected:
         for (auto nom : noms) {
             if (auto lam = nom->isa<Lam>(); lam && lam != scope.exit()) {
                 assert(lam == entry_ || lam->is_basicblock());
-                lam->dump();
                 child().emit_epilogue(lam);
             }
         }

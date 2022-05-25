@@ -9,7 +9,8 @@ bool is_scalar(MOp mop){
     switch (mop) {
         case MOp::sadd:
         case MOp::smul:
-        case MOp::ssub:{
+        case MOp::ssub:
+        case MOp::sdiv:{
             return true;
         }
         default:{
@@ -43,7 +44,7 @@ const Def* zero(World& w, const Def* type){
 }
 
 enum Op{
-    mul, add, sub
+    mul, add, sub, div
 };
 
 const Def* op(World& w, Op op, const Def* rmode, const Def* type, const Def* lhs, const Def* rhs){
@@ -58,6 +59,7 @@ const Def* op(World& w, Op op, const Def* rmode, const Def* type, const Def* lhs
             case add: return w.op(ROp::add, rmode, lhs, rhs);
             case sub: return w.op(ROp::sub, rmode, lhs, rhs);
             case mul: return w.op(ROp::mul, rmode, lhs, rhs);
+            case div: return w.op(ROp::div, rmode, lhs, rhs);
         }
     }
 
@@ -76,7 +78,7 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
     auto body = constructResult.body;
 
     switch (mop) {
-        case MOp::mul: {
+        case MOp::vec: {
             entry->set_dbg(world().dbg("mop_mul"));
             auto [result_ptr, result_rows, result_cols] = constructResult.result_matrix->projs<3>();
 
@@ -128,12 +130,14 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
         }
         case MOp::add:
         case MOp::sub:
-        case MOp::emul: {
+        case MOp::mul:
+        case MOp::div: {
             Op op_ty;
             switch (mop) {
                 case MOp::add: entry->set_dbg(world().dbg("mop_add")); op_ty = Op::add; break;
                 case MOp::sub: entry->set_dbg(world().dbg("mop_sub")); op_ty = Op::sub; break;
-                case MOp::emul: entry->set_dbg(world().dbg("mop_emul")); op_ty = Op::mul; break;
+                case MOp::mul: entry->set_dbg(world().dbg("mop_mul")); op_ty = Op::mul; break;
+                case MOp::div: entry->set_dbg(world().dbg("mop_div")); op_ty = Op::div; break;
                 default: thorin::unreachable();
             }
 
@@ -162,12 +166,14 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def
         }
         case MOp::sadd:
         case MOp::smul:
-        case MOp::ssub: {
+        case MOp::ssub:
+        case MOp::sdiv: {
             Op op_ty;
             switch (mop) {
                 case MOp::sadd: entry->set_dbg(world().dbg("mop_sadd")); op_ty = Op::add; break;
                 case MOp::smul: entry->set_dbg(world().dbg("mop_smul")); op_ty = Op::mul; break;
                 case MOp::ssub: entry->set_dbg(world().dbg("mop_ssub")); op_ty = Op::sub; break;
+                case MOp::sdiv: entry->set_dbg(world().dbg("mop_sdiv")); op_ty = Op::div; break;
                 default: thorin::unreachable();
             }
 
