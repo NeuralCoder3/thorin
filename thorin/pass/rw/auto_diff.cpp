@@ -558,11 +558,9 @@ namespace {
 
 class AutoDiffer {
 public:
-    AutoDiffer(World& world, const Def2Def& src_to_dst, const Def* A_)
+    AutoDiffer(World& world, const Pi* dst_pi)
         : world_{world}
-        , src_to_dst_{src_to_dst}
-        , A_src{A_}
-        , A{world.tangent_type(A_,false)}
+        , dst_pi{dst_pi}
     {
         // initializes the differentiation for a function of type A -> B
         // src_to_dst expects the parameters of the source lambda to be mapped
@@ -610,11 +608,16 @@ private:
     const Def* extract_pb(const Def* j_extract, const Def* tuple);
 
     World& world_;
-    Def2Def src_to_dst_; // mapping old def to new def
+
+    // src_to_dst maps old definitions to new ones
+    // here we map the arguments of the lambda
+    Def2Def src_to_dst_;
+    DefMap<const Lam*> map_wrapper_;
     DefMap<const Def*> pullbacks_;  // <- maps a *copied* src term (a dst term) to its pullback function
     DefMap<const Def*> pointer_map;
     DefMap<const Def*> structure_map;
-    const Def* A, *A_src, *zero_grad;// input type
+    const Def* A, *zero_grad;// input type
+    const Pi* dst_pi;
 
     void initArg(const Def* dst);
     const Def* ptrSlot(const Def* ty, const Def* mem);
@@ -838,78 +841,7 @@ std::pair<const Def*,const Def*> AutoDiffer::reloadPtrPb(const Def* mem, const D
     pullbacks_[ptr]=pb_load_fun;
     return {pb_load_mem,pb_load_fun};
 }
-// top level entry point after creating the AutoDiffer object
-// a mapping of source arguments to dst arguments is expected in src_to_dst
-const Def* AutoDiffer::reverse_diff(Lam* src) {
-    // For each param, create an appropriate pullback. It is just the (one-hot) identity function for each of those.
-    auto dst_lam = src_to_dst_[src]->as_nom<Lam>();
-    current_mem=dst_lam->mem_var();
 
-    auto src_var = src->var();
-    auto dst_var = src_to_dst_[src_var];
-    auto var_sigma = src_var->type()->as<Sigma>();
-
-    DefArray trimmed_var_ty = var_sigma->ops().skip(1,1);
-    auto trimmed_var_sigma = world_.sigma(trimmed_var_ty);
-    auto idpi = createPbType(A,trimmed_var_sigma);
-    auto idpb = world_.nom_filter_lam(idpi, world_.dbg("param_id"));
-    auto vars = dst_lam->vars();
-    auto real_params = vars.skip(1,1);
-    auto [current_mem_,zero_grad_] = ZERO(world_,current_mem,A,world_.tuple(real_params));
-    current_mem=current_mem_;
-    zero_grad=zero_grad_;
-    // ret only resp. non-mem, non-cont
-    auto idpb_vars = idpb->vars();
-    auto args = idpb_vars.skip_back();
-    idpb->set_body(world_.app(idpb->ret_var(), args));
-    pullbacks_[dst_var] = idpb;
-    auto src_vars = src->vars();
-
-
-    for(auto dvar : src_vars.skip(1,1)) {
-        // solve the problem of inital array pb in extract pb
-        auto extract =  extract_pb(dvar, dst_lam->var());
-        pullbacks_[dvar] = extract;
-        initArg(dvar);
-    }
-
-    // translate the body => get correct applications of variables using pullbacks
-    const Def* dst;
-    if(src->is_set()){
-        dst = j_wrap(src->body());
-    }else{
-
-    }
-
-    return dst;
-}
-
-void AutoDiffer::initArg(const Def* dst) {
-    // TODO: iterate (recursively) over tuple
-    // create shadow slots for pointersq
-
-    auto arg_ty = dst->type();
-    // we need to initialize the shadow ptr slot for
-    // ptr args here instead of at store & load (first usage)
-    // as the slot needs the correct pullback (from the ptr object)
-    // to be stored and loaded
-    // when the ptr shadow slot is accessed it has to have the correct
-    // content in the current memory object used to load
-    // this is only possible at a common point before all usages
-    //   => creation / first mentioning
-    if(auto ptr= isa<Tag::Ptr>(arg_ty)) {
-        auto ty = ptr->arg()->projs<2>()[0];
-        auto dst_mem = current_mem;
-        auto [pb_mem, pb_ptr] = ptrSlot(arg_ty, dst_mem)->projs<2>();
-        pointer_map[dst] = pb_ptr;
-        // write the pb into the slot
-        auto pb_store_mem = world_.op_store(pb_mem, pb_ptr, pullbacks_[dst], world_.dbg("pb_arg_id_store"));
-        current_mem=pb_store_mem;
-        return;
-    }
-
-    // prepare extracts
-}
 const Def* AutoDiffer::ptrSlot(const Def* ty, const Def* mem) {
     auto pbty = createPbType(A,ty);
     //                    auto ptrpbty = createPbType(A,world_.type_ptr(ty));
@@ -1267,53 +1199,53 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         return dst;
     }
     if (auto mop = isa<Tag::Map>(def)) {
-        auto mem = mop->arg(0);
+        auto mem = j_wrap(mop->arg(0));
         auto mat = j_wrap(mop->arg(1));
         auto f = mop->arg(2);
 
         auto mat_pb = pullbacks_[mat];
 
         auto elem_type = world_.elem_ty_of_mat(mat->type());
-
-
         auto pbpi = createPbType(A, mat->type());
 
-        //auto pbTa = pbpi->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
+        const Lam* wrapper;
+        if(!map_wrapper_.contains(f)){
+            auto f_wrap = world_.op_rev_diff(f);
 
-        auto f_wrap = world_.op_rev_diff(f);
+            auto f_type = f->type()->as<Pi>();
+            auto f_return_pi = f_type->dom(f_type->num_doms() - 1)->as<Pi>();
 
-        // pullbacks of the arguments
+            auto f_wrap_type = f_wrap->type()->as<Pi>();
+            auto f_result_pi = f_wrap_type->dom(f_wrap_type->num_doms() - 1)->as<Pi>();
+            auto f_d_call_pi = f_result_pi->dom(f_result_pi->num_doms() - 1)->as<Pi>();
+            auto f_d_result_pi = f_d_call_pi->dom(f_d_call_pi->num_doms() - 1)->as<Pi>();
 
-        auto f_type = f->type()->as<Pi>();
-        auto f_wrap_type = f_wrap->type()->as<Pi>();
-        auto f_result_pi = f_wrap_type->dom(f_wrap_type->num_doms() - 1)->as<Pi>();
-        auto f_d_call_pi = f_result_pi->dom(f_result_pi->num_doms() - 1)->as<Pi>();
-        auto f_d_result_pi = f_d_call_pi->dom(f_d_call_pi->num_doms() - 1)->as<Pi>();
+            auto f_result_lam = world_.nom_filter_lam(f_result_pi, world_.lit_false(), world_.dbg("f_result_lam"));
+            auto f_d_result_lam = world_.nom_filter_lam(f_d_result_pi, world_.lit_false(), world_.dbg("f_d_result_lam"));
 
-        auto f_result_lam = world_.nom_filter_lam(f_result_pi, world_.lit_bool(false), world_.dbg("f_result_lam"));
-        auto f_d_result_lam = world_.nom_filter_lam(f_d_result_pi,world_.lit_bool(false),  world_.dbg("f_d_result_lam"));
+            auto result_type = world_.tuple(f_return_pi->doms().skip_front());
 
-        //auto app = world_.app(f_wrap, f_result_lam);
+            auto wrapper_lam = world_.builder()
+                    .add(f_type->doms())
+                    .popBack()
+                    .add(world_.builder().mem().add(result_type).add(result_type).cn())
+                    .nom_filter_lam("wrapper");
 
+            auto f_d_call = f_result_lam->var(f_result_lam->num_vars() - 1);
+            f_result_lam->set_body(world_.app(f_d_call, {f_result_lam->mem_var(), world_.lit_real(64, 1.0), f_d_result_lam}));
+            f_d_result_lam->set_body(world_.app(wrapper_lam->ret_var(), {f_d_result_lam->mem_var(), f_result_lam->var(1), f_d_result_lam->var(1)}));
+            wrapper_lam->set_body(world_.app(f_wrap, {wrapper_lam->mem_var(), wrapper_lam->var(1), f_result_lam}));
+            wrapper = wrapper_lam;
+            map_wrapper_[f] = wrapper;
+        }else{
+            wrapper = map_wrapper_[f];
+        }
 
-        Lam *forward = world_.nom_filter_lam(f->type()->as<Pi>(), world_.lit_bool(false), world_.dbg("phi_"));
-
-        auto f_return_pi = f_type->dom(f_type->num_doms() - 1)->as<Pi>();
-        auto result_type = world_.tuple(f_return_pi->doms().skip_front());
-
-        auto wrapper = world_.builder().add(f_type->doms()).popBack().add(world_.builder().mem().add(result_type).add(result_type).cn())
-            .nom_filter_lam("test");
-
-        auto f_d_call = f_result_lam->var(f_result_lam->num_vars() - 1);
-        f_result_lam->set_body(world_.app(f_d_call, {f_result_lam->mem_var(), world_.lit_real(64, 1.0), f_d_result_lam}));
-        f_d_result_lam->set_body(world_.app(wrapper->ret_var(), {f_d_result_lam->mem_var(), f_result_lam->var(1), f_d_result_lam->var(1)}));
-        wrapper->set_body(world_.app(f_wrap, {wrapper->mem_var(), wrapper->var(1), f_result_lam}));
-
-        auto [forward_map_mem, forward_map_mat] = world_.op_map( current_mem, mat, wrapper )->projs<2>();
+        auto [forward_map_mem, forward_map_mat] = world_.op_map( mem, mat, wrapper )->projs<2>();
 
         auto [fx, fxd] = forward_map_mat->projs<2>();
 
-        Lam *pb = world_.nom_filter_lam(pbpi, world_.lit_bool(false), world_.dbg("phi_test"));
+        Lam *pb = world_.nom_filter_lam(pbpi, world_.lit_false(), world_.dbg("pb_map"));
 
         auto [emul_mem, emul_mat] = world_.op( MOp::emul, RMode::none, pb->mem_var(), pb->var(1), fxd )->projs<2>();
         pb->set_body(world_.app(mat_pb, {emul_mem, emul_mat, pb->ret_var()}));
@@ -1443,65 +1375,108 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto ptr_ty = as<Tag::Ptr>(lea->type());
         auto [ty,addr_space] = ptr_ty->arg()->projs<2>();
         auto [src_ptr, ignore] = lea->arg()->projs<2>();
+        auto idx = j_wrap(lea->arg(1));
+
+        bool is_mat = false;
         if(auto extract = src_ptr->isa<Extract>()){
             auto value = extract->tuple();
-            //TODO:
+            if(auto mat_type = isa<Tag::Mat>(value->type())){
+                auto mat_wrap = j_wrap(value);
+                is_mat = true;
+
+                auto elem_type = world_.elem_ty_of_mat(mat_type);
+                auto shape_size = as_lit(world_.dim_count_of_mat(mat_type));
+
+                DefArray dims{shape_size};
+
+                for( size_t i = 0 ; i < shape_size ; i++ ){
+                    dims[i] = world_.extract(mat_wrap, i + 1);
+                }
+
+                auto pi = createPbType(A,ty);
+                auto pb = world_.nom_filter_lam(pi, world_.dbg("pb_lea"));
+
+                auto [mat_alloc_mem, gradient_matrix] = world_.op_create_matrix(elem_type, dims, pb->mem_var(), true)->projs<2>();
+                auto ptr = world_.extract(gradient_matrix, (u64)0);
+
+                auto gradient_lea = world_.op_lea(ptr, idx);
+                auto store_mem = world_.op_store(mat_alloc_mem, gradient_lea, pb->var(1));
+
+                auto pb_mat = pullbacks_[mat_wrap];
+                pb->set_body( world_.app(
+                    pb_mat,
+                    {
+                        store_mem,
+                        gradient_matrix,
+                        pb->ret_var()
+                    }
+                ));
+
+                auto dst = world_.op_lea(world_.extract(mat_wrap, (u64)0), idx);
+                //pullbacks_[dst] = pb;
+
+
+                auto [cmem2,ptr_slot]=world_.op_slot(pb->type(),current_mem,world_.dbg("lea_ptr_shadow_slot"))->projs<2>();
+                auto cmem3=world_.op_store(cmem2,ptr_slot,pb);
+                pointer_map[dst]=ptr_slot;
+                auto [cmem4, _]= reloadPtrPb(cmem3,dst,world_.dbg("lea_shadow_load"),false);
+                current_mem=cmem4;
+
+                return dst;
+            }
         }
 
+        if(!is_mat){
+            auto fat_ptr=j_wrap(lea->arg(0));
+            auto [arr_size,arr] = fat_ptr->projs<2>(); // not necessary
+            auto dst = world_.op_lea(arr,idx);
+            auto [arr_ty, arr_addr_space] = as<Tag::Ptr>(arr->type())->arg()->projs<2>();
+            auto pi = createPbType(A,ty);
+            auto pb = world_.nom_filter_lam(pi, world_.dbg("pb_lea"));
+            auto arr_size_nat = world_.op_bitcast(world_.type_nat(),arr_size);
+            auto arr_sized_ty=world_.arr(arr_size_nat,arr_ty->as<Arr>()->body())->as<Arr>();
+            auto ptr_arr_sized_ty = world_.type_ptr(arr_sized_ty);
+            // TODO: merge with ZERO?
 
-        auto fat_ptr=j_wrap(lea->arg(0));
-        auto [arr_size,arr] = fat_ptr->projs<2>();
-        auto idx = j_wrap(lea->arg(1)); // not necessary
-        auto dst = world_.op_lea(arr,idx);
-        auto [arr_ty, arr_addr_space] = as<Tag::Ptr>(arr->type())->arg()->projs<2>();
-        auto pi = createPbType(A,ty);
-        auto pb = world_.nom_filter_lam(pi, world_.dbg("pb_lea"));
-        auto arr_size_nat = world_.op_bitcast(world_.type_nat(),arr_size);
-        auto arr_sized_ty=world_.arr(arr_size_nat,arr_ty->as<Arr>()->body())->as<Arr>();
-        auto ptr_arr_sized_ty = world_.type_ptr(arr_sized_ty);
-        // TODO: merge with ZERO?
+            auto [mem2,ptr_arr]=world_.op_alloc(arr_sized_ty,pb->mem_var())->projs<2>();
+            auto shape=arr_sized_ty->shape();
+            auto body = arr_sized_ty->body();
+            auto [mem3, body_lit] = ZERO(world_,mem2,body);
+            auto init=world_.pack(shape,body_lit);
+            auto mem4=world_.op_store(mem3,ptr_arr,init);
+            assert(pullbacks_.count(fat_ptr) && "arr from lea should already have an pullback");
+            auto ptr_arr_idef = pullbacks_[fat_ptr]->type()->as<Pi>()->dom(2);
+            auto ptr_arr_arg = world_.op_bitcast(ptr_arr_idef,ptr_arr);
+            auto fat_ptr_arr_arg = world_.tuple({arr_size,ptr_arr_arg});
+            auto scal_ptr = world_.op_lea(ptr_arr_arg,idx);
+            auto v = pb->var(1);
+            auto mem5 = world_.op_store(mem4,scal_ptr,v);
+            pb->set_body( world_.app(
+                pullbacks_[fat_ptr],
+                flat_tuple({
+                    mem5,
+                    fat_ptr_arr_arg,
+                    pb->ret_var()
+                })
+            ));
 
-        auto [mem2,ptr_arr]=world_.op_alloc(arr_sized_ty,pb->mem_var())->projs<2>();
-        auto shape=arr_sized_ty->shape();
-        auto body = arr_sized_ty->body();
-        auto [mem3, body_lit] = ZERO(world_,mem2,body);
-        auto init=world_.pack(shape,body_lit);
-        auto mem4=world_.op_store(mem3,ptr_arr,init);
-        assert(pullbacks_.count(fat_ptr) && "arr from lea should already have an pullback");
-//        type_dump(world_,"fat_ptr",fat_ptr);
-//        type_dump(world_,"pb of fat_ptr",pullbacks_[fat_ptr]);
-        auto ptr_arr_idef = pullbacks_[fat_ptr]->type()->as<Pi>()->dom(2);
-//        auto ptr_arr_idef = pullbacks_[fat_ptr]->type()->as<Pi>()->dom(1)->op(1); // if single fat ptr pb is non_flat
-//        type_dump(world_,"ptr_arr_idef",ptr_arr_idef);
-        auto ptr_arr_arg = world_.op_bitcast(ptr_arr_idef,ptr_arr);
-        auto fat_ptr_arr_arg = world_.tuple({arr_size,ptr_arr_arg});
-//        dlog(world_,"lea on ptr_arr_arg {} of type {} with idx {} : {}",ptr_arr_arg,ptr_arr_arg->type(),idx,idx->type());
-        auto scal_ptr = world_.op_lea(ptr_arr_arg,idx);
-        auto v = pb->var(1);
-        auto mem5 = world_.op_store(mem4,scal_ptr,v);
-        pb->set_body( world_.app(
-            pullbacks_[fat_ptr],
-            flat_tuple({
-                mem5,
-                fat_ptr_arr_arg,
-                pb->ret_var()
-            })
-        ));
-        auto [cmem2,ptr_slot]=world_.op_slot(pb->type(),current_mem,world_.dbg("lea_ptr_shadow_slot"))->projs<2>();
-        auto cmem3=world_.op_store(cmem2,ptr_slot,pb);
-        pointer_map[dst]=ptr_slot;
 
-        // instead of reload because we have no toplevel mem here
-        // and this point dominates all usages
+            auto [cmem2,ptr_slot]=world_.op_slot(pb->type(),current_mem,world_.dbg("lea_ptr_shadow_slot"))->projs<2>();
+            auto cmem3=world_.op_store(cmem2,ptr_slot,pb);
+            pointer_map[dst]=ptr_slot;
 
-        auto [cmem4, _]= reloadPtrPb(cmem3,dst,world_.dbg("lea_shadow_load"),false);
-        current_mem=cmem4;
+            // instead of reload because we have no toplevel mem here
+            // and this point dominates all usages
 
-        // in a structure preseving setting
-        //   meaning diff of tuple is tuple, ...
-        //   this would be a lea
+            auto [cmem4, _]= reloadPtrPb(cmem3,dst,world_.dbg("lea_shadow_load"),false);
+            current_mem=cmem4;
 
-        return dst;
+            // in a structure preseving setting
+            //   meaning diff of tuple is tuple, ...
+            //   this would be a lea
+
+            return dst;
+        }
     }
 
     // memory operations
@@ -2118,6 +2093,129 @@ const Def* AutoDiffer::seen(const Def* src) { return src_to_dst_.contains(src) ?
 
 } // namespace
 
+// top level entry point after creating the AutoDiffer object
+// a mapping of source arguments to dst arguments is expected in src_to_dst
+const Def* AutoDiffer::reverse_diff(Lam* src) {
+    auto src_pi = src->type();
+
+    auto dst_lam = world_.nom_filter_lam(dst_pi, src->filter(), world_.dbg("top_level_rev_diff_" + src->name())); // copy the unfold filter
+    // use src to not dilute tangent transformation with left type transformation (only matters for arrays)
+    auto A_src = world_.params_without_return_continuation(src_pi); // input variable(s) => possible a pi type (array)
+
+    // is cn[mem, B0, ..., Bm, pb] => skip mem and pb
+    auto B = world_.params_without_return_continuation(dst_pi->dom()->ops().back()->as<Pi>());
+    // The actual AD, i.e. construct "sq_cpy"
+
+    // For each param, create an appropriate pullback. It is just the (one-hot) identity function for each of those.
+    current_mem = dst_lam->mem_var();
+
+    A = world_.tangent_type(A_src,false);
+
+    // translate the body => get correct applications of variables using pullbacks
+    const Def* dst;
+    if(src->is_set()){
+        auto src_var = src->var();
+        auto var_sigma = src_var->type()->as<Sigma>();
+        src_to_dst_[src] = dst_lam;
+        src_to_dst_[src->var()] = dst_lam->var();
+        DefArray trimmed_var_ty = var_sigma->ops().skip(1,1);
+        auto trimmed_var_sigma = world_.sigma(trimmed_var_ty);
+        auto idpi = createPbType(A,trimmed_var_sigma);
+        auto idpb = world_.nom_filter_lam(idpi, world_.dbg("param_id"));
+        auto vars = dst_lam->vars();
+        auto real_params = vars.skip(1,1);
+        auto [current_mem_,zero_grad_] = ZERO(world_,current_mem,A,world_.tuple(real_params));
+        current_mem=current_mem_;
+        zero_grad=zero_grad_;
+        // ret only resp. non-mem, non-cont
+        auto idpb_vars = idpb->vars();
+        auto args = idpb_vars.skip_back();
+        idpb->set_body(world_.app(idpb->ret_var(), args));
+        auto dst_var = src_to_dst_[src_var];
+        pullbacks_[dst_var] = idpb;
+        auto src_vars = src->vars();
+
+
+        for(auto dvar : src_vars.skip(1,1)) {
+            // solve the problem of inital array pb in extract pb
+            auto extract =  extract_pb(dvar, dst_lam->var());
+            pullbacks_[dvar] = extract;
+            initArg(dvar);
+        }
+
+        dst = dst_lam->set_body(j_wrap(src->body()));
+    }else{
+        auto augTy = world_.tangent_type(src->type(),true)->as<Pi>();
+        // type of result (after taking argument x)
+        auto resTy = augTy->doms().back()->as<Pi>();
+        // type of the pullback f*
+        auto pbTy = resTy->doms().back()->as<Pi>();
+        // f*
+        auto gradlam=world_.nom_filter_lam(pbTy, world_.dbg("dummy"));
+
+        // new augmented lam f' to replace old one
+        auto lam=world_.nom_filter_lam(augTy,world_.dbg("dummy"));
+        auto lam2 = world_.nom_filter_lam(src->doms().back()->as<Pi>(),world_.dbg("dummy"));
+
+        auto wrapped_cal_lam = lam_fat_ptr_wrap(world_, src);
+        derive_external(wrapped_cal_lam, gradlam, lam, lam2);
+
+        lam->set_debug_name(src->name() + "_diff_impl");
+        lam2->set_debug_name(lam->name() + "_cont");
+        gradlam->set_debug_name(src->name() + "_pb");
+        auto callee_arguments = world_.tuple( flat_tuple({
+             lam->mem_var(),
+             world_.tuple(vars_without_mem_cont(lam)),
+             lam2
+        }));
+
+        lam->set_body( world_.app(
+                wrapped_cal_lam,
+                callee_arguments
+        ));
+
+        lam2->set_body( world_.app(
+                lam->ret_var(),
+                {
+                        lam2->mem_var(),
+                        world_.tuple(vars_without_mem_cont(lam2)),
+                        gradlam
+                }
+        ));
+
+        dst = lam;
+    }
+
+    return dst;
+}
+
+void AutoDiffer::initArg(const Def* dst) {
+    // TODO: iterate (recursively) over tuple
+    // create shadow slots for pointersq
+
+    auto arg_ty = dst->type();
+    // we need to initialize the shadow ptr slot for
+    // ptr args here instead of at store & load (first usage)
+    // as the slot needs the correct pullback (from the ptr object)
+    // to be stored and loaded
+    // when the ptr shadow slot is accessed it has to have the correct
+    // content in the current memory object used to load
+    // this is only possible at a common point before all usages
+    //   => creation / first mentioning
+    if(auto ptr= isa<Tag::Ptr>(arg_ty)) {
+        auto ty = ptr->arg()->projs<2>()[0];
+        auto dst_mem = current_mem;
+        auto [pb_mem, pb_ptr] = ptrSlot(arg_ty, dst_mem)->projs<2>();
+        pointer_map[dst] = pb_ptr;
+        // write the pb into the slot
+        auto pb_store_mem = world_.op_store(pb_mem, pb_ptr, pullbacks_[dst], world_.dbg("pb_arg_id_store"));
+        current_mem=pb_store_mem;
+        return;
+    }
+
+    // prepare extracts
+}
+
 // rewrites applications of the form 'rev_diff function' into the differentiation of f
 const Def* AutoDiff::rewrite(const Def* def) {
     // isa<Tag::RevDiff> is not applicable here
@@ -2133,7 +2231,7 @@ const Def* AutoDiff::rewrite(const Def* def) {
 
         auto fun_arg = isClosure ? app->arg(1) : app->arg(0);
         auto src_lam = fun_arg->as_nom<Lam>();
-        auto src_pi = src_lam->type();
+
         // function to differentiate
         // this should be something like `cn[:mem, r32, cn[:mem, r32]]`
         auto& world = src_lam->world();
@@ -2146,23 +2244,11 @@ const Def* AutoDiff::rewrite(const Def* def) {
             dst_pi = app->type()->op(1)->as<Pi>();
         else
             dst_pi = app->type()->as<Pi>(); // multi dim as array
-        auto dst_lam = world.nom_filter_lam(dst_pi, src_lam->filter(), world.dbg("top_level_rev_diff_" + src_lam->name())); // copy the unfold filter
-        // use src to not dilute tangent transformation with left type transformation (only matters for arrays)
-        auto A = world.params_without_return_continuation(src_pi); // input variable(s) => possible a pi type (array)
 
-        // is cn[mem, B0, ..., Bm, pb] => skip mem and pb
-        auto B = world.params_without_return_continuation(dst_pi->dom()->ops().back()->as<Pi>());
-        // The actual AD, i.e. construct "sq_cpy"
-        Def2Def src_to_dst;
-        // src_to_dst maps old definitions to new ones
-        // here we map the arguments of the lambda
+        auto differ = AutoDiffer{world, dst_pi};
+        auto dst_lam = differ.reverse_diff(src_lam);
 
-        src_to_dst[src_lam] = dst_lam;
-        src_to_dst[src_lam->var()] = dst_lam->var();
-        auto differ = AutoDiffer{world, src_to_dst, A};
-        dst_lam->set_body(differ.reverse_diff(src_lam));
-
-        auto dst=isClosure ? world.insert(app->arg(),1,dst_lam) : dst_lam;
+        auto dst = isClosure ? world.insert(app->arg(),1,dst_lam) : dst_lam;
         return dst;
     }}}
     return def;
