@@ -535,7 +535,7 @@ Lam* LowerMatrix::rewrite_map(const App* app, const Def* arg_wrap){
         auto cols = b_cols;
 
         ConstructResult constructResult{};
-        construct_mat_loop(entry, out_type, rows, cols, cols, rows, constructResult);
+        construct_mat_loop(entry, out_type, rows, cols, rows, cols, constructResult);
 
         World &w = world();
 
