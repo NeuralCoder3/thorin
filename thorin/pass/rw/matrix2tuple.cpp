@@ -72,7 +72,7 @@ const Def* Matrix2Tuple::rewrite_convert(const Def* def) {
     }else if(auto slot = isa<Tag::Slot>(def)){
         auto [type, addr_space] = slot->callee()->isa<App>()->arg()->projs<2>();
         auto mem = rewrite_cached(slot->arg(0));
-        return world().op_slot(type, mem);
+        return world().op_slot(rewrite_type_cached(type), mem);
     }else if(auto old_lam= def->isa_nom<Lam>()) {
         if(isa_workable(old_lam)){
             DefVec new_doms, new_vars, new_args;

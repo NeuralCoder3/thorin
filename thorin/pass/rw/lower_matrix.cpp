@@ -1,9 +1,6 @@
 #include "thorin/pass/rw/lower_matrix.h"
 #include <algorithm>
 
-#define dlog(world,...) world.DLOG(__VA_ARGS__)
-#define type_dump(world,name,d) world.DLOG("{} {} : {}",name,d,d->type())
-
 namespace thorin {
 
 #define builder world().builder()
@@ -585,8 +582,10 @@ const Def* LowerMatrix::rewrite_app(const App* app){
         thorin::unreachable();
     }
 
-    helper.tail = result_lam;
-    helper.currentMem = result_lam->mem_var();
+    helper = {
+        .currentMem = result_lam->mem_var(),
+        .tail = result_lam,
+    };
 
     return result_lam->var();
 }
@@ -600,7 +599,6 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
             .tail = lam,
         };
 
-        lam->dump();
         auto result = rewrite_rec(lam->body());
 
         helper.tail->set_body(result);
@@ -629,17 +627,11 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         auto args_rewritten = rewrite_rec(arg);
         auto arg_proj = args_rewritten->projs();
         auto callee = app->callee();
-        const Def* app_wrap;
-        callee->dump();
-        if(is_memop(current)){
-            app_wrap = world().app(callee, arg_proj);
-        }else if(auto lam = callee->isa_nom<Lam>()){
+        if(auto lam = callee->isa_nom<Lam>()){
             return world().app(rewrite_rec(lam), arg_proj);
         }else{
-            app_wrap = world().app(callee, arg_proj);
+            return world().app(callee, arg_proj);
         }
-
-        return app_wrap;
     }else if(auto tuple = current->isa<Tuple>()){
         auto wrapped = tuple->projs().map([&](auto elem, auto) { return rewrite_rec(elem); });
         auto resultTuple = world().tuple(wrapped);
@@ -659,7 +651,6 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         return var;
     }
 
-    current->dump();
     return current;
 }
 
