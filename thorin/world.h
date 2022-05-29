@@ -619,7 +619,7 @@ public:
 
     class Builder{
         std::vector<const Def*> v;
-        bool filter_ = false;
+        bool filter_ = true;
         World* world;
     public:
         Builder(World* world) : world(world){

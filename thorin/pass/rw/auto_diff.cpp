@@ -1997,35 +1997,33 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
                 pb->set_dbg(world_.dbg(pb->name() + "sub"));
                 pb->set_body(world_.app(apb, {pb->mem_var(), pb->var(1), middle}));
 
-                auto [negate_mem, negate_mat] = world_.op(MOp::smul, RMode::none, middle->mem_var(), world_.lit_real(64, -1.0), pb->var(1))->projs<2>();
+                auto [negate_mem, negate_mat] = world_.op(MOp::smul, MMode::none, middle->mem_var(), world_.lit_real(64, -1.0), pb->var(1))->projs<2>();
                 middle->set_body(world_.app(bpb, {negate_mem, negate_mat, end}));
                 break;
             }
             case MOp::mul: {
                 pb->set_dbg(world_.dbg(pb->name() + "mul"));
 
-                auto [middle_emul_mem, middle_emul_mat] = world_.op(MOp::mul, RMode::none, pb->mem_var(), b, pb->var(1))->projs<2>();
+                auto [middle_emul_mem, middle_emul_mat] = world_.op(MOp::mul, MMode::none, pb->mem_var(), b, pb->var(1))->projs<2>();
                 pb->set_body(world_.app(apb, {middle_emul_mem, middle_emul_mat, middle}));
-                auto [end_emul_mem, end_emul_met] = world_.op(MOp::mul, RMode::none, middle->mem_var(), a, pb->var(1))->projs<2>();
+                auto [end_emul_mem, end_emul_met] = world_.op(MOp::mul, MMode::none, middle->mem_var(), a, pb->var(1))->projs<2>();
                 middle->set_body(world_.app(bpb, {end_emul_mem, end_emul_met, end}));
                 break;
             }
             case MOp::vec: {
                 pb->set_dbg(world_.dbg(pb->name() + "vec"));
 
-                auto [transpose_b_mem, transpose_b] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(),  b)->projs<2>();
-                auto [left_diff_mem, left_diff_mat] = world_.op(MOp::vec, RMode::none, transpose_b_mem, pb->var(1), transpose_b)->projs<2>();
+                auto [left_diff_mem, left_diff_mat] = world_.op(MOp::vec, MMode::rtrans, pb->mem_var(), pb->var(1), b)->projs<2>();
                 pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
 
-                auto [transpose_a_mem, transpose_a] = world_.unary_op(MOp::transpose, RMode::none, middle->mem_var(), a)->projs<2>();
-                auto [right_diff_mem, right_diff_mat] = world_.op(MOp::vec, RMode::none, transpose_a_mem, transpose_a, pb->var(1))->projs<2>();
+                auto [right_diff_mem, right_diff_mat] = world_.op(MOp::vec, MMode::ltrans, middle->mem_var(), a, pb->var(1))->projs<2>();
                 middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
                 break;
             }
             case MOp::sadd: {
                 pb->set_dbg(world_.dbg(pb->name() + "scalar_add"));
 
-                auto [sum_mem, sum_mat] = world_.unary_op(MOp::sum, RMode::none, pb->mem_var(), pb->var(1))->projs<2>();
+                auto [sum_mem, sum_mat] = world_.unary_op(MOp::sum, MMode::none, pb->mem_var(), pb->var(1))->projs<2>();
                 pb->set_body(world_.app(apb, {sum_mem, sum_mat, middle}));
                 middle->set_body(world_.app(bpb, {middle->mem_var(), pb->var(1), end}));
                 break;
