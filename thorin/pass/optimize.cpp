@@ -59,8 +59,8 @@ void optimize(World& world) {
     optA.add<AutoDiff>();
     optA.run();
 
-    PassMan::run<LowerMatrix>(world);
-    PassMan::run<Matrix2Tuple>(world);
+    // PassMan::run<LowerMatrix>(world);
+    // PassMan::run<Matrix2Tuple>(world);
 
 //     PassMan optZ(world);
 //     optZ.add<ZipEval>();

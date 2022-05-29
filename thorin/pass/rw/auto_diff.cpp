@@ -920,6 +920,14 @@ void AutoDiffer::derive_external(const Lam *fun, Lam *pb, Lam *fw, Lam *res_lam)
 
     auto returnCont = pb->ret_var();
 
+    // f:A->B
+    // then f_diff: A -> A
+    // takes input, return deriv
+    // wrap in dimensionwise s* (not correct in general)
+
+    // TODO: need scalar for multidim
+    // add scalar args to _diff function
+
     if (user_defined_diff != nullptr) {
         auto scal_mul_wrap = world_.nom_filter_lam(return_type, world_.dbg("scal_mul"));
 
