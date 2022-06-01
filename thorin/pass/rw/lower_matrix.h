@@ -92,7 +92,7 @@ public:
     void construct_mat_loop(Lam* entry, const Def* elem_type, const Def* a_rows, const Def* b_cols, const Def* alloc_rows, const Def* alloc_cols, ConstructHelper& constructResult);
     void construct_scalar_loop(Lam* entry, const Def* elem_type, const Def* a_rows, const Def* b_cols, ConstructHelper& constructResult);
     void construct_void_loop(Lam* entry, const Def* rows, const Def* cols, ConstructHelper& constructResult);
-    void construct_mop(Lam* entry, MOp mop, const Def* rmode, const Def* elem_type, const Def* rows, const Def* cols, ConstructHelper& constructResult);
+    void construct_mop(Lam* entry, MOp mop, const Def* elem_type, const Def* rows, const Def* cols, ConstructHelper& constructResult);
     Lam* rewrite_mop(const App* app, const Def* arg_wrap);
     Lam* rewrite_map(const App* app, const Def* arg_wrap);
     const Def* alloc_stencil(const Def* stencil, const Def* rows, const Def* cols,  const Def*& mem);

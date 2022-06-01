@@ -115,7 +115,7 @@ const Lam* vec_add(World& world, const Def* a, const Def* b, const Def* cont) {
     if(isa<Tag::Mat>(a->type())){
         sum_pb->set_body(world.app(
             cont,
-            world.op(MOp::add, RMode::none, sum_pb->mem_var(), a, b)
+            world.op(MOp::add, MMode::none, sum_pb->mem_var(), a, b)
         ));
         return sum_pb;
     }

@@ -55,7 +55,7 @@ const Def* op(World& w, Op op, const Def* type, const Def* lhs, const Def* rhs){
             case add: return w.op(Wrap::add, WMode::none, lhs, rhs);
             case sub: return w.op(Wrap::sub, WMode::none, lhs, rhs);
             case mul: return w.op(Wrap::mul, WMode::none, lhs, rhs);
-            default: thorin::unreachable();
+            case div: return w.op(Div::sdiv, WMode::none, lhs, rhs);
         }
     }else if(auto float_type = isa<Tag::Real>(type)){
         switch (op) {
@@ -69,16 +69,11 @@ const Def* op(World& w, Op op, const Def* type, const Def* lhs, const Def* rhs){
     thorin::unreachable();
 }
 
-const Def* mul_add(World& w, const Def* rmode, const Def* type, const Def* lhs, const Def* rhs, const Def* carry){
-    return op(w, Op::add, rmode, type, op(w, Op::mul, rmode, type, lhs, rhs), carry);
+const Def* mul_add(World& w, const Def* type, const Def* lhs, const Def* rhs, const Def* carry){
+    return op(w, Op::add, type, op(w, Op::mul, type, lhs, rhs), carry);
 }
 
-const Def* mul_add(World& w, nat_t rmode, const Def* type, const Def* lhs, const Def* rhs, const Def* carry){
-    auto lit = w.lit_nat(rmode);
-    return mul_add(w, lit, type, lhs, rhs, carry);
-}
-
-void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* mmode, const Def* elem_type, const Def* rows, const Def* cols, ConstructHelper& helper){
+void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* elem_type, const Def* rows, const Def* cols, ConstructHelper& helper){
     World& w = world();
 
     auto left_row_index = helper.left_row_index;
@@ -113,7 +108,7 @@ void LowerMatrix::construct_mop(Lam* entry, MOp mop, const Def* mmode, const Def
             auto [left_load_mem, left_value] = w.op_load(left_col_yield->mem_var(), left_ptr)->projs<2>();
             auto [right_load_mem, right_value] = w.op_load(left_load_mem, right_ptr)->projs<2>();
 
-            auto sum = mul_add(w, w.lit_nat(RMode::none), elem_type, left_value, right_value, carry);
+            auto sum = mul_add(w, elem_type, left_value, right_value, carry);
 
             builder
                     .add(right_load_mem)
@@ -419,7 +414,7 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
         construct_mat_loop(entry, world().type_mat(2, elem_type), rows, cols, rows, cols, helper);
     }
 
-    construct_mop(entry, mop, mmode, elem_type, rows, cols, helper);
+    construct_mop(entry, mop, elem_type, rows, cols, helper);
 
     mop_variants[signature] = entry;
     return entry;
@@ -456,7 +451,7 @@ Lam* LowerMatrix::rewrite_mop(const App* app, const Def* arg_wrap){
         res_buil.type_matrix(2, elem_type);
     }
 
-    auto result_lam = res_buil.nom_filter_lam("mop_result");
+    auto result_lam = res_buil.nom_filter_lam(mop_lam->name() + "_mop_result");
     builder.flatten(arg_wrap).add(result_lam).app_body(chainHelper.tail, mop_lam);
     return result_lam;
 }

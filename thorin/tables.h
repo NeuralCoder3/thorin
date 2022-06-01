@@ -75,7 +75,6 @@ namespace MMode {
         none     = 0,
         ltrans     = 1 << 0,
         rtrans     = 1 << 1,
-
     };
 }
 
