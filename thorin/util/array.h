@@ -174,12 +174,15 @@ public:
     }
 
     template<typename Result = T >
-    Array<T> prepend(T value){
-        auto result = Array<Result>(size() + 1);
-        result[0] = value;
+    Array<T> prepend(std::vector<T> values){
+        auto prepend_size = values.size();
+        auto result = Array<Result>(size() + prepend_size);
+        for( size_t i = 0 ; i < prepend_size ; i++ ){
+            result[i] = values[i];
+        }
 
         for (size_t i = 0; i < size(); ++i){
-            result[i + 1] = (*this)[i];
+            result[i + prepend_size] = (*this)[i];
         }
 
         return result;

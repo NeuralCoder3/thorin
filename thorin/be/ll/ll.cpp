@@ -494,10 +494,10 @@ std::string CodeGen::emit_bb(BB& bb, const Def* def) {
         auto [mode, width] = wrap->decurry()->args<2>(as_lit<nat_t>);
 
         switch (wrap.flags()) {
-            case Wrap::add: op = "add"; break;
-            case Wrap::sub: op = "sub"; break;
-            case Wrap::mul: op = "mul"; break;
-            case Wrap::shl: op = "shl"; break;
+            case Wrap::add:  op = "add"; break;
+            case Wrap::sub:  op = "sub"; break;
+            case Wrap::mul:  op = "mul"; break;
+            case Wrap::shl:  op = "shl"; break;
             default: unreachable();
         }
 

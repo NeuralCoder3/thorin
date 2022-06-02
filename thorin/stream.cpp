@@ -140,7 +140,7 @@ std::ostream& operator<<(std::ostream& os, Unwrap u) {
     } else if (auto proxy = u->isa<Proxy>()) {
         return print(os, ".proxy#{}#{} {, }", proxy->index(), proxy->flags(), proxy->ops());
     } else if (auto mat = u->isa<Mat>()) {
-        return print(os, "[[{} : { x }]]", mat->op(0), mat->ops().skip_front());
+        return print(os, "[[{} {} : { x }]]", mat->op(0), mat->op(1), mat->ops().skip_front(2));
     } else if (auto bound = isa_bound(*u)) {
         auto op = bound->isa<Join>() ? "∪" : "∩";
         if (auto nom = u->isa_nom()) print(os, "{}{}: {}", op, nom->unique_name(), nom->type());

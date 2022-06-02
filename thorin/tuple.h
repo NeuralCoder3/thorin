@@ -53,12 +53,8 @@ public:
 /// Data constructor for a Sigma.
 class Mat : public Def {
 private:
-    Mat(const Def* type, Defs dims, const Def* ptr, const Def* dbg)
-            : Def(Node, type, dims.prepend(ptr), 0, dbg) {
-    }
 
-    Mat(const Def* type, Defs ops, const Def* dbg)
-            : Def(Node, type, std::move(ops), 0, dbg) {
+    Mat(const Def* type, Defs ops, const Def* dbg) : Def(Node, type, std::move(ops), 0, dbg) {
     }
 
 public:
@@ -66,6 +62,18 @@ public:
     ///@{
     const Def* rebuild(World&, const Def*, Defs, const Def*) const override;
     ///@}
+
+    const Def* meta() const{
+        return op(0);
+    }
+
+    const Def* data() const{
+        return op(1);
+    }
+
+    const Def* dim(nat_t n) const{
+        return op(2 + n);
+    }
 
     static constexpr auto Node = Node::Mat;
     friend class World;

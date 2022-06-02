@@ -458,11 +458,19 @@ std::pair<const Def*,const Def*> lit_of_type(World& world, const Def* mem, const
 
     if( auto mat = isa<Tag::Mat>(type) ){
         auto elem_type = mat->arg(1);
-        auto rows = world.extract(like, (u64) 1);
-        auto cols = world.extract(like, (u64) 2);
-        auto [elem_mem, body_lit] = lit_of_type(world,mem,elem_type,nullptr,lit,dummy);
-        auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, {rows, cols}, elem_mem, body_lit)->projs<2>();
-        return {alloc_mem, new_mat};
+        auto rows = world.extract(like, (u64) 2);
+        auto cols = world.extract(like, (u64) 3);
+        if(lit == 0.0){
+            auto mat = world.op_create_zero_matrix(elem_type, {rows, cols});
+            return {mem, mat};
+        }else if(lit == 1.0){
+            auto mat = world.op_create_one_matrix(elem_type, {rows, cols});
+            return {mem, mat};
+        }else{
+            auto [elem_mem, body_lit] = lit_of_type(world,mem,elem_type,nullptr,lit,dummy);
+            auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, {rows, cols}, elem_mem, body_lit)->projs<2>();
+            return {alloc_mem, new_mat};
+        };
     }
 
     // TODO: not for idef array
@@ -1388,14 +1396,14 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
                 DefArray dims{shape_size};
 
                 for( size_t i = 0 ; i < shape_size ; i++ ){
-                    dims[i] = world_.extract(mat_wrap, i + 1);
+                    dims[i] = world_.extract(mat_wrap, i + 2);
                 }
 
                 auto pi = createPbType(A,ty);
                 auto pb = world_.nom_filter_lam(pi, world_.dbg("pb_lea"));
 
                 auto [mat_alloc_mem, gradient_matrix] = world_.op_create_matrix(elem_type, dims, pb->mem_var(), true)->projs<2>();
-                auto ptr = world_.extract(gradient_matrix, (u64)0);
+                auto ptr = world_.extract(gradient_matrix, (u64)1);
 
                 auto gradient_lea = world_.op_lea(ptr, idx);
                 auto store_mem = world_.op_store(mat_alloc_mem, gradient_lea, pb->var(1));
@@ -1410,7 +1418,7 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
                     }
                 ));
 
-                auto dst = world_.op_lea(world_.extract(mat_wrap, (u64)0), idx);
+                auto dst = world_.op_lea(world_.extract(mat_wrap, (u64)1), idx);
                 //pullbacks_[dst] = pb;
 
 
@@ -1930,8 +1938,8 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
             auto [dst_mem, dst_sum] = world_.unary_op(MOp::sum, RMode::none, current_mem, a)->projs<2>();
             current_mem = dst_mem;
             dst = dst_sum;
-            auto rows = world_.extract(a, (u64)1);
-            auto cols = world_.extract(a, (u64)2);
+            auto rows = world_.extract(a, (u64)2);
+            auto cols = world_.extract(a, (u64)3);
 
             auto [stencil_mem, stencil_mat] = world_.op_create_matrix(world_.type_real(64), {rows, cols}, pb->mem_var(), pb->var(1) )->projs<2>();
             pb->set_body(world_.app(apb, {stencil_mem, stencil_mat, pb->ret_var()}));

@@ -28,15 +28,42 @@ public:
     }
 
     const Def* getRows(){
-        return mat->proj(1 + (transpose ? 1 : 0));
+        return mat->proj(2 + (transpose ? 1 : 0));
     }
 
     const Def* getCols(){
-        return mat->proj(1 + (transpose ? 0 : 1));
+        return mat->proj(2 + (transpose ? 0 : 1));
     }
 
     const Def* getPointer(){
+        return mat->proj(1);
+    }
+
+    const Def* getMeta(){
         return mat->proj(0);
+    }
+
+    const Def* bitCheck(u32 bit){
+        auto meta = getMeta();
+        auto mask = world.lit_int_width(32, 1 << bit);
+        auto masked = world.op(Bit::_and, meta, mask);
+        return world.op(ICmp::e, masked, mask);
+    }
+
+    const Def* isZero(){
+        return bitCheck(0);
+    }
+
+    const Def* isOne(){
+        return bitCheck(1);
+    }
+
+    const Def* isConst(){
+        return bitCheck(2);
+    }
+
+    const Def* isTranspose(){
+        return bitCheck(3);
     }
 
     const Def* getIndex(const Def* row, const Def* col){
@@ -62,13 +89,14 @@ public:
     MatrixHelper right;
     MatrixHelper result;
 
-    const Def* scalar_result = nullptr;
+    const Def* raw_result = nullptr;
+    const Def* arg = nullptr;
     const Def* rows = nullptr;
     const Def* cols = nullptr;
-    //const Def* result_matrix;
     const Def* left_row_index = nullptr;
     const Def* right_col_index = nullptr;
     Lam* body = nullptr;
+    const Def* ret_var;
 
     ConstructHelper(World& w) : left(w), right(w), result(w){
 

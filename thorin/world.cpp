@@ -492,8 +492,9 @@ const Def* World::sigma(Defs ops, const Def* dbg) {
     return unify<Sigma>(ops.size(), infer_type(ops), ops, dbg);
 }
 
-const Def* World::mat(const Def* mat_type, const Def* ptr, Defs dims, const Def* dbg) {
-    return unify<Mat>(dims.size() + 1, mat_type, dims, ptr, dbg);
+const Def* World::mat(const Def* mat_type, const Def* meta, const Def* ptr, Defs dims, const Def* dbg) {
+    auto ops = dims.prepend({meta, ptr});
+    return unify<Mat>(ops.size(), mat_type, ops, dbg);
 }
 
 const Def* World::mat(const Def* mat_type, Defs ops, const Def* dbg) {
@@ -784,10 +785,10 @@ const Def* World::extract_(const Def* ex_type, const Def* tup, const Def* index,
             auto elem_type = mat->arg(1);
 
             const Def* result_type = nullptr;
-            if(*i == 0){
-                result_type = type_ptr(arr(top_nat(), elem_type));
-            }else{
-                result_type = type_int_width(64);
+            switch (*i) {
+                case 0: result_type = type_int_width(32); break;
+                case 1: result_type = type_ptr(arr(top_nat(), elem_type)); break;
+                default: result_type = type_int_width(64); break;
             }
 
             if(result_type != nullptr){
@@ -1160,7 +1161,7 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
     const Def* result_mem = alloc_mem;
 
     arr = op_bitcast(ptr_unknows_size, arr);
-    auto result_mat = mat(type_mat(dims.size(), elem_type), arr, conv_defs);
+    auto result_mat = mat(type_mat(dims.size(), elem_type), lit_int_width(32, 0), arr, conv_defs);
 
     if(init_def != nullptr){
         result_mem = op(MOp::init, RMode::none, result_mem, init_def, result_mat, {} );
@@ -1175,6 +1176,22 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
         init = lit_real(64, 0.0);
     }
     return op_create_matrix(elem_type, dims, mem, init);
+}
+
+const Def* World::op_create_zero_matrix(const Def* elem_type, Defs dims ){
+    auto arr_unknown_size_ty = arr(top_nat(), elem_type)->as<Arr>();
+    auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
+    auto zero_ptr = op_bitcast(ptr_unknows_size, lit_nat(0));
+    auto result_mat = mat(type_mat(dims.size(), elem_type), lit_int_width(32, 1), zero_ptr, dims);
+    return result_mat;
+}
+
+const Def* World::op_create_one_matrix(const Def* elem_type, Defs dims ){
+    auto arr_unknown_size_ty = arr(top_nat(), elem_type)->as<Arr>();
+    auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
+    auto zero_ptr = op_bitcast(ptr_unknows_size, lit_nat(0));
+    auto result_mat = mat(type_mat(dims.size(), elem_type), lit_int_width(32, 2), zero_ptr, dims);
+    return result_mat;
 }
 
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg){
