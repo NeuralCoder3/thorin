@@ -11,6 +11,7 @@ class LoopBuilderResult{
 public:
     DefArray indices;
     DefArray vars;
+    DefArray reductions;
 
     Lam* entry;
     Lam* finish;
@@ -57,9 +58,9 @@ public:
             auto [loop, yield] = world.repeat(range, var_ty);
 
             b
-                    .mem(body)
-                    .add(body->vars().skip_front(1 + (body_is_yield ? 1 : 0)))
-                    .app_body(body, loop);
+                .mem(body)
+                .add(body->vars().skip_front(1 + (body_is_yield ? 1 : 0)))
+                .app_body(body, loop);
 
             body_is_yield = true;
             body = yield;
@@ -68,11 +69,12 @@ public:
         }
 
         return {
-                .indices = indices,
-                .vars = vars,
-                .entry = entry,
-                .finish = finish,
-                .body = body
+            .indices = indices,
+            .vars = vars,
+            .reductions = finish->vars().skip_front(1),
+            .entry = entry,
+            .finish = finish,
+            .body = body
         };
     }
 };
@@ -154,14 +156,24 @@ public:
         return result;
     }
 
-    const Def* getIndex(const Def* row, const Def* col){
-        auto rows = getRows();
-        auto cols = getCols();
-        if(transpose){
-            return world.row_col_to_index(col, row, rows);
+    const Def* getIndex(const DefArray& indices){
+        if(indices.size() == 2){
+            auto cols = getCols();
+            return world.row_col_to_index(indices[0], indices[1], cols);
+        }else if(indices.size() == 1){
+            return indices[0];
         }else{
-            return world.row_col_to_index(row, col, cols);
+            thorin::unreachable();
         }
+    }
+
+    const Def* getIndex(const Def* row, const Def* col){
+        return getIndex({row, col});
+    }
+
+    const Def* getLea(DefArray& indices){
+        auto index = getIndex(indices);
+        return lea(index);
     }
 
     const Def* getLea(const Def* row, const Def* col){
@@ -177,6 +189,11 @@ public:
     const Def* load(const Def* mem, const Def* index){
         const Def* ptr = lea(index);
         return world.op_load(mem, ptr);
+    }
+
+    const Def* store(const Def* mem, const Def* index, const Def* value){
+        const Def* ptr = lea(index);
+        return world.op_store(mem, ptr, value);
     }
 
     const Def* load_const_value(const Def* mem){
@@ -209,16 +226,12 @@ public:
     MatrixHelper result;
 
     const Def* raw_result = nullptr;
-    //const Def* arg = nullptr;
     const Def* rows = nullptr;
     const Def* cols = nullptr;
-    const Def* left_row_index = nullptr;
-    const Def* right_col_index = nullptr;
+    DefArray indices;
+    DefArray vars;
     Lam* body = nullptr;
     Lam* impl_entry = nullptr;
-    //Lam* entry = nullptr;
-    //Lam* impl = nullptr;
-    //const Def* ret_var;
 
     ConstructHelper(World& w) : entry(w), impl(w), result(w){
 
@@ -240,10 +253,10 @@ public:
     const Def* rewrite_rec_convert(const Def* current);
     const Lam* const_reduction(MOp mop, ROp rop,ConstructHelper& helper);
     const Lam* create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type, const Def* rmode);
-    void construct_mat_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, const Def* alloc_rows, const Def* alloc_cols, ConstructHelper& constructResult);
+    void construct_mat_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, const Def* alloc_rows, const Def* alloc_cols, bool flatten, ConstructHelper& constructResult);
     void construct_scalar_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, ConstructHelper& constructResult);
     void construct_void_loop(const Def* rows, const Def* cols, ConstructHelper& constructResult);
-    void construct_mop( MOp mop, const Def* elem_type, const Def* rows, const Def* cols, ConstructHelper& constructResult);
+    void construct_mop( MOp mop, const Def* elem_type, ConstructHelper& constructResult);
     Lam* rewrite_mop(const App* app, const Def* arg_wrap);
     Lam* rewrite_map(const App* app, const Def* arg_wrap);
     const Def* alloc_stencil(const Def* stencil, const Def* rows, const Def* cols,  const Def*& mem);
