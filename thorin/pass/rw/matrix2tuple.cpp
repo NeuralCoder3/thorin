@@ -22,7 +22,7 @@ const Def* Matrix2Tuple::rewrite_cached(const Def* def) {
 }
 
 const Def* Matrix2Tuple::rewrite_type_cached(const Def* def) {
-    if (auto mat_type = isa<Tag::Mat>(def)) {
+    if (auto mat_type = isa<Tag::Tn>(def)) {
         found = true;
     }
 
@@ -31,7 +31,7 @@ const Def* Matrix2Tuple::rewrite_type_cached(const Def* def) {
 }
 
 const Def* Matrix2Tuple::rewrite_type(const Def* def) {
-    if (auto mat_type = isa<Tag::Mat>(def)) {
+    if (auto mat_type = isa<Tag::Tn>(def)) {
         return world().type_mat_tuple(mat_type);
     }else if(auto pi = def->isa<Pi>()){
         if(pi->is_cn()){
@@ -85,7 +85,7 @@ const Def* Matrix2Tuple::rewrite_convert(const Def* def) {
             auto target_sigma = world().sigma(new_doms);
 
             auto new_pi  = world().cn(target_sigma);
-            auto new_lam = world().nom_filter_lam(new_pi, old_lam->dbg());
+            auto new_lam = world().nom_filter_lam(new_pi, old_lam->filter(), old_lam->dbg());
 
             for (size_t var_i = 0, n = old_doms.size(); var_i < n; ++var_i) {
                 old2new_[old_lam->var(var_i)] = new_lam->var(var_i);

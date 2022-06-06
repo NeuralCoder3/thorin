@@ -152,12 +152,18 @@ public:
     Lam* nom_lam(const Pi* cn, const Def* dbg = {}) { return nom_lam(cn, Lam::CC::C, dbg); }
 
     Lam* nom_filter_lam(const Pi* cn, const Def* dbg){
+        return nom_filter_lam(cn, lit_true(), dbg);
+    }
+
+    Lam* nom_filter_lam2(const Pi* cn, const Def* dbg){
         return nom_filter_lam(cn, lit_false(), dbg);
     }
 
     Lam* nom_filter_lam(const Pi* cn, const Def* filter, const Def* dbg){
         Lam* lam = nom_lam(cn, dbg);
-        lam->set_filter(filter);
+        if(filter != nullptr){
+            lam->set_filter(filter);
+        }
         return lam;
     }
 
@@ -368,10 +374,10 @@ public:
     const Axiom* type_ptr() { return data_.type_ptr_; }
     const Axiom* type_mat() { return data_.type_mat_; }
     const App* type_bool() { return data_.type_bool_; }
-    const Def* type_mat(nat_t dim_count, const Def* elem_type) {
-        return type_mat(lit_nat(dim_count), elem_type);
+    const Def* type_tn(nat_t dim_count, const Def* elem_type) {
+        return type_tn(lit_nat(dim_count), elem_type);
     }
-    const Def* type_mat(const Def* dim_count, const Def* elem_type) {
+    const Def* type_tn(const Def* dim_count, const Def* elem_type) {
         return app(type_mat(), {dim_count, elem_type});
     }
     const App* type_int_width(nat_t width) { return type_int(lit_nat(width2mod(width))); }
@@ -468,15 +474,15 @@ public:
         return app(fn(o, rmode, infer(a)), {a, b}, dbg);
     }
 
-    const Def* elem_ty_of_mat(const Def* matrix){
-        if(auto mat_type = isa<Tag::Mat>(matrix)){
+    const Def* elem_ty_of_tn(const Def* tensor){
+        if(auto mat_type = isa<Tag::Tn>(tensor)){
             return mat_type->arg(1);
         }
 
         thorin::unreachable();
     }
-    const Def* dim_count_of_mat(const Def* matrix){
-        if(auto mat_type = isa<Tag::Mat>(matrix)){
+    const Def* dim_count_of_tn(const Def* tensor){
+        if(auto mat_type = isa<Tag::Tn>(tensor)){
             return mat_type->arg(0);
         }
 
@@ -484,8 +490,8 @@ public:
     }
 
     const Def* type_mat_tuple(const Def* mat){
-        if (auto mat_type = isa<Tag::Mat>(mat)) {
-            auto elem_type = elem_ty_of_mat(mat_type);
+        if (auto mat_type = isa<Tag::Tn>(mat)) {
+            auto elem_type = elem_ty_of_tn(mat_type);
             return sigma({
                  type_int_width(32),
                  type_ptr(arr(top_nat(), elem_type)),
@@ -498,13 +504,13 @@ public:
     }
 
     const Def* op(MOp o, const Def* rmode, const Def* mem, const Def* a, const Def* b, const Def* dbg  = {}) {
-        return app(app(ax(o), {rmode, dim_count_of_mat(b->type()), elem_ty_of_mat(b->type())}, dbg), {mem, a, b}, dbg);
+        return app(app(ax(o), {rmode, dim_count_of_tn(b->type()), elem_ty_of_tn(b->type())}, dbg), {mem, a, b}, dbg);
     }
     const Def* op(MOp o, nat_t mode, const Def* mem, const Def* a, const Def* b, const Def* dbg  = {}) {
         return op(o, lit_nat(mode), mem, a, b, dbg);
     }
     const Def* unary_op(MOp o, const Def* rmode, const Def* mem, const Def* a, const Def* dbg  = {}) {
-        return app(app(ax(o), {rmode, dim_count_of_mat(a->type()), elem_ty_of_mat(a->type())}, dbg), {mem, a}, dbg);
+        return app(app(ax(o), {rmode, dim_count_of_tn(a->type()), elem_ty_of_tn(a->type())}, dbg), {mem, a}, dbg);
     }
     const Def* unary_op(MOp o, nat_t mode, const Def* mem, const Def* a, const Def* dbg  = {}) {
         return unary_op(o, lit_nat(mode), mem, a, dbg);
@@ -587,6 +593,7 @@ public:
     const Def* op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, const Def* init_def);
     const Def* op_create_zero_matrix(const Def* elem_type, Defs dims );
     const Def* op_create_one_matrix(const Def* elem_type, Defs dims );
+    const Def* op_create_const_matrix(const Def* elem_type, Defs dims, const Def* mem, const Def* lit );
     const Def* row_col_to_index( const Def* row, const Def* col, const Def* col_size){
         row = op(Conv::u2u, type_int_width(64), row);
         col = op(Conv::u2u, type_int_width(64), col);
@@ -644,10 +651,12 @@ public:
             return *this;
         }
 
-        Builder& flatten(const Def* def){
-            if(def->isa<Sigma>() || def->isa<Tuple>() || def->isa<Var>()){
+        Builder& flatten(const Def* def ){
+            auto isVar = def->isa<Var>();
+            if(isVar || def->isa<Sigma>() || def->isa<Tuple>()){
+                nat_t i = isVar && !v.empty() ? 1 : 0; //start from 1 if mem already is present
                 nat_t size = def->num_projs();
-                for(nat_t i = 0; i < size ; i++ ){
+                for(; i < size ; i++ ){
                     v.push_back(def->proj(i));
                 }
             }else{
@@ -672,7 +681,7 @@ public:
         }
 
         Builder& type_matrix(nat_t dim_count, const Def* elem_type){
-            v.push_back(world->type_mat(dim_count, elem_type));
+            v.push_back(world->type_tn(dim_count, elem_type));
             return *this;
         }
 

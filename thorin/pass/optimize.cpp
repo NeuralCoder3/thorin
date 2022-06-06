@@ -59,8 +59,19 @@ void optimize(World& world) {
     optA.add<AutoDiff>();
     optA.run();
 
+    PassMan::run<PartialEval>(world);
+    //PassMan::run<Peephole>(world);
+
+    //world.ostream() << world;
+
     PassMan::run<LowerMatrix>(world);
+
+    world.ostream() << world;
+
     PassMan::run<Matrix2Tuple>(world);
+
+    PassMan::run<PartialEval>(world);
+    world.ostream() << world;
 
 //     PassMan optZ(world);
 //     optZ.add<ZipEval>();

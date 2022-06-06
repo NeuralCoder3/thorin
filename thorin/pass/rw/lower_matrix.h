@@ -5,6 +5,78 @@
 
 namespace thorin {
 
+
+
+class LoopBuilderResult{
+public:
+    DefArray indices;
+    DefArray vars;
+
+    Lam* entry;
+    Lam* finish;
+    Lam* body;
+};
+
+class LoopBuilder{
+    World& world;
+    DefVec ranges;
+
+    DefVec indices;
+    DefArray vars;
+    Lam* body;
+    Lam* entry;
+    Lam* finish;
+    DefVec var_ty;
+    DefVec var_init;
+    bool body_is_yield = false;
+
+#define b world.builder()
+public:
+    LoopBuilder(World& w) : world(w){
+    }
+
+    void addLoop( const Def* count ){
+        ranges.push_back(count);
+    }
+
+    void addVar(const Def* ty, const Def* init){
+        var_ty.push_back(ty);
+        var_init.push_back(init);
+    }
+
+    LoopBuilderResult build(){
+        finish = b.mem().add(var_ty).nom_filter_lam("loop_result");
+        entry = b.mem().nom_filter_lam("loop_entry1");
+        body = b.mem().add(var_ty).add(b.mem().add(var_ty).cn()).nom_filter_lam("loop_body");
+
+        b.mem(entry).add(var_init).add(finish).app_body(entry, body);
+        b.add(body->vars().skip_back(1)).app_body(body, body->ret_var());
+        body_is_yield = false;
+
+        for(auto range : ranges){
+            auto [loop, yield] = world.repeat(range, var_ty);
+
+            b
+                    .mem(body)
+                    .add(body->vars().skip_front(1 + (body_is_yield ? 1 : 0)))
+                    .app_body(body, loop);
+
+            body_is_yield = true;
+            body = yield;
+            indices.push_back(yield->var(1));
+            vars = yield->vars().skip(2, 1);
+        }
+
+        return {
+                .indices = indices,
+                .vars = vars,
+                .entry = entry,
+                .finish = finish,
+                .body = body
+        };
+    }
+};
+
 class MatrixHelper{
     World& world;
     const Def* mat = nullptr;
@@ -12,6 +84,10 @@ class MatrixHelper{
 
 public:
     MatrixHelper(World& w) : world(w){
+
+    }
+
+    MatrixHelper(const Def* mat) : world(mat->world()), mat(mat){
 
     }
 
@@ -66,6 +142,18 @@ public:
         return bitCheck(3);
     }
 
+    DefArray dims(){
+        auto shape_size = as_lit(world.elem_ty_of_tn(mat->type()));
+
+        DefArray result{2};
+
+        for(size_t i = 0 ; i < shape_size ; i++){
+            result[i] = world.extract(mat, i + 2);
+        }
+
+        return result;
+    }
+
     const Def* getIndex(const Def* row, const Def* col){
         auto rows = getRows();
         auto cols = getCols();
@@ -78,27 +166,61 @@ public:
 
     const Def* getLea(const Def* row, const Def* col){
         auto index = getIndex(row, col);
+        return lea(index);
+    }
+
+    const Def* lea(const Def* index){
         auto ptr = getPointer();
         return world.op_lea(ptr, index);
+    }
+
+    const Def* load(const Def* mem, const Def* index){
+        const Def* ptr = lea(index);
+        return world.op_load(mem, ptr);
+    }
+
+    const Def* load_const_value(const Def* mem){
+        return load(mem, world.lit_int_width(64, 0));
+    }
+};
+
+class InputHelper{
+public:
+    Lam* lam = nullptr;
+    const Def* arg = nullptr;
+    MatrixHelper left;
+    MatrixHelper right;
+
+    InputHelper(World& w) : left(w), right(w){
+
     }
 };
 
 class ConstructHelper{
 public:
+    /*MatrixHelper leftEntry;
+    MatrixHelper rightEntry;
     MatrixHelper left;
     MatrixHelper right;
+    MatrixHelper result;*/
+
+    InputHelper entry;
+    InputHelper impl;
     MatrixHelper result;
 
     const Def* raw_result = nullptr;
-    const Def* arg = nullptr;
+    //const Def* arg = nullptr;
     const Def* rows = nullptr;
     const Def* cols = nullptr;
     const Def* left_row_index = nullptr;
     const Def* right_col_index = nullptr;
     Lam* body = nullptr;
-    const Def* ret_var;
+    Lam* impl_entry = nullptr;
+    //Lam* entry = nullptr;
+    //Lam* impl = nullptr;
+    //const Def* ret_var;
 
-    ConstructHelper(World& w) : left(w), right(w), result(w){
+    ConstructHelper(World& w) : entry(w), impl(w), result(w){
 
     }
 };
@@ -116,16 +238,20 @@ public:
     void enter() override;
     const Def* rewrite_rec(const Def* current, bool convert = true);
     const Def* rewrite_rec_convert(const Def* current);
+    const Lam* const_reduction(MOp mop, ROp rop,ConstructHelper& helper);
     const Lam* create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type, const Def* rmode);
-    void construct_mat_loop(Lam* entry, const Def* elem_type, const Def* a_rows, const Def* b_cols, const Def* alloc_rows, const Def* alloc_cols, ConstructHelper& constructResult);
-    void construct_scalar_loop(Lam* entry, const Def* elem_type, const Def* a_rows, const Def* b_cols, ConstructHelper& constructResult);
-    void construct_void_loop(Lam* entry, const Def* rows, const Def* cols, ConstructHelper& constructResult);
-    void construct_mop(Lam* entry, MOp mop, const Def* elem_type, const Def* rows, const Def* cols, ConstructHelper& constructResult);
+    void construct_mat_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, const Def* alloc_rows, const Def* alloc_cols, ConstructHelper& constructResult);
+    void construct_scalar_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, ConstructHelper& constructResult);
+    void construct_void_loop(const Def* rows, const Def* cols, ConstructHelper& constructResult);
+    void construct_mop( MOp mop, const Def* elem_type, const Def* rows, const Def* cols, ConstructHelper& constructResult);
     Lam* rewrite_mop(const App* app, const Def* arg_wrap);
     Lam* rewrite_map(const App* app, const Def* arg_wrap);
     const Def* alloc_stencil(const Def* stencil, const Def* rows, const Def* cols,  const Def*& mem);
     const Def* rewrite_app(const App* app);
     void store_rec(const Def* value, const Def* mat, const Def* index, const Def*& mem);
+
+    const Pi* mop_pi(MOp mop, const Def* elem_type);
+    Lam* mop_lam(MOp mop, const Def* elem_type, const std::string& name);
 
     ChainHelper chainHelper;
 

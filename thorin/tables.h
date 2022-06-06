@@ -34,7 +34,7 @@ using nat_t    = u64;
 #define THORIN_TAG(m)                                               \
     m(Mem, mem) m(Int, int) m(Real, real) m(Ptr, ptr)               \
     m(Bit, bit) m(Shr, shr) m(Wrap, wrap) m(Div, div) m(ROp, rop)   \
-    m(MOp, mop) m(Mat, mat) m(Map, map)                             \
+    m(MOp, mop) m(Tn, mat) m(Map, map)                              \
     m(ICmp, icmp) m(RCmp, rcmp)                                     \
     m(Trait, trait) m(Conv, conv) m(PE, pe) m(Acc, acc)             \
     m(Bitcast, bitcast) m(LEA, lea)                                 \
@@ -73,8 +73,8 @@ namespace RMode {
 namespace MMode {
     enum RMode : nat_t {
         none     = 0,
-        ltrans     = 1 << 0,
-        rtrans     = 1 << 1,
+        //ltrans     = 1 << 0,
+        //rtrans     = 1 << 1,
     };
 }
 

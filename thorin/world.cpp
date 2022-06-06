@@ -61,7 +61,7 @@ World::World(std::string_view name)
     auto mem = data_.type_mem_ = axiom(type(), Tag::Mem, 0, dbg("mem"));
 
     { // mat: [T: *] -> *
-        data_.type_mat_ = axiom(nullptr, pi(sigma({nat, type()}), type()), Tag::Mat, 0, dbg("mat"));
+        data_.type_mat_ = axiom(nullptr, pi(sigma({nat, type()}), type()), Tag::Tn, 0, dbg("tn"));
     }
 
     { // ptr: [T: *, as: nat] -> *
@@ -106,7 +106,7 @@ World::World(std::string_view name)
         {
             auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
             auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
-            auto real_w = type_mat(c, w);
+            auto real_w = type_tn(c, w);
             ty->set_codom(pi({mem, real_w, real_w}, sigma({mem, real_w})));
 
             CODE(MOp, add)
@@ -118,7 +118,7 @@ World::World(std::string_view name)
         {
             auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
             auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
-            auto real_w = type_mat(c, w);
+            auto real_w = type_tn(c, w);
             ty->set_codom(pi({mem, w, real_w}, sigma({mem, real_w})));
 
             CODE(MOp, sadd)
@@ -128,7 +128,7 @@ World::World(std::string_view name)
         {
             auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
             auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
-            auto real_w = type_mat(c, w);
+            auto real_w = type_tn(c, w);
             ty->set_codom(pi({mem, real_w}, sigma({mem, real_w})));
 
             CODE(MOp, transpose)
@@ -136,7 +136,7 @@ World::World(std::string_view name)
         {
             auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
             auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
-            auto real_w = type_mat(c, w);
+            auto real_w = type_tn(c, w);
             ty->set_codom(pi({mem, real_w}, sigma({mem, w})));
 
             CODE(MOp, sum)
@@ -144,7 +144,7 @@ World::World(std::string_view name)
         {
             auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
             auto [m, c, w] = ty->vars<3>({dbg("m"), dbg("c"), dbg("w")});
-            auto real_w = type_mat(c, w);
+            auto real_w = type_tn(c, w);
             ty->set_codom(pi({mem, w, real_w}, mem));
 
             CODE(MOp, init)
@@ -421,7 +421,7 @@ const Def* World::tangent_type(const Def* A,bool left) {
         return result;
     }
 
-    if(auto mat = isa<Tag::Mat>(A)){
+    if(auto mat = isa<Tag::Tn>(A)){
         return A;
     }
 
@@ -781,7 +781,7 @@ const Def* World::extract_(const Def* ex_type, const Def* tup, const Def* index,
         }
         if (type->isa<Sigma>()) return unify<Extract>(2, ex_type ? ex_type : type->op(*i), tup, index, dbg);
 
-        if(auto mat = isa<Tag::Mat>(type)){
+        if(auto mat = isa<Tag::Tn>(type)){
             auto elem_type = mat->arg(1);
 
             const Def* result_type = nullptr;
@@ -1005,7 +1005,7 @@ static const Def* tuple_of_types(const Def* t) {
     auto& world = t->world();
     if (auto sigma = t->isa<Sigma>()) return world.tuple(sigma->ops());
     if (auto arr = t->isa<Arr>()) return world.pack(arr->shape(), arr->body());
-    //if (isa<Tag::Mat>(t)) return world.tuple(world.type_mat_to_tuple(t)->ops());
+    //if (isa<Tag::Tn>(t)) return world.tuple(world.type_mat_to_tuple(t)->ops());
     return t;
 }
 
@@ -1119,18 +1119,18 @@ const Def* World::params_without_return_continuation(const Pi* pi) {
 
 const Def* World::op_map(const Def* mem, const Def* mat, const Def* fn, const Def* dbg){
     auto mat_type = mat->type();
-    auto shape_size = dim_count_of_mat(mat_type);
-    auto elem_type = elem_ty_of_mat(mat_type);
+    auto shape_size = dim_count_of_tn(mat_type);
+    auto elem_type = elem_ty_of_tn(mat_type);
 
     auto pi = fn->type()->as<Pi>();
     auto return_pi = pi->doms().back()->as<Pi>();
 
-    auto dims = dim_count_of_mat(mat->type());
+    auto dims = dim_count_of_tn(mat->type());
 
     DefArray arr{return_pi->num_doms() - 1};
     size_t i = 0;
     for(auto ty : return_pi->doms().skip_front()){
-        arr[i] = this->type_mat(dims, ty);
+        arr[i] = this->type_tn(dims, ty);
         i++;
     }
 
@@ -1161,7 +1161,7 @@ const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* m
     const Def* result_mem = alloc_mem;
 
     arr = op_bitcast(ptr_unknows_size, arr);
-    auto result_mat = mat(type_mat(dims.size(), elem_type), lit_int_width(32, 0), arr, conv_defs);
+    auto result_mat = mat(type_tn(dims.size(), elem_type), lit_int_width(32, 0), arr, conv_defs);
 
     if(init_def != nullptr){
         result_mem = op(MOp::init, RMode::none, result_mem, init_def, result_mat, {} );
@@ -1182,7 +1182,7 @@ const Def* World::op_create_zero_matrix(const Def* elem_type, Defs dims ){
     auto arr_unknown_size_ty = arr(top_nat(), elem_type)->as<Arr>();
     auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
     auto zero_ptr = op_bitcast(ptr_unknows_size, lit_nat(0));
-    auto result_mat = mat(type_mat(dims.size(), elem_type), lit_int_width(32, 1), zero_ptr, dims);
+    auto result_mat = mat(type_tn(dims.size(), elem_type), lit_int_width(32, 1 << 0), zero_ptr, dims);
     return result_mat;
 }
 
@@ -1190,8 +1190,18 @@ const Def* World::op_create_one_matrix(const Def* elem_type, Defs dims ){
     auto arr_unknown_size_ty = arr(top_nat(), elem_type)->as<Arr>();
     auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
     auto zero_ptr = op_bitcast(ptr_unknows_size, lit_nat(0));
-    auto result_mat = mat(type_mat(dims.size(), elem_type), lit_int_width(32, 2), zero_ptr, dims);
+    auto result_mat = mat(type_tn(dims.size(), elem_type), lit_int_width(32, 1 << 1), zero_ptr, dims);
     return result_mat;
+}
+
+const Def* World::op_create_const_matrix(const Def* elem_type, Defs dims, const Def* mem, const Def* val ){
+    auto [slot_mem, ptr] = op_slot(elem_type, mem)->projs<2>();
+    auto store_mem = op_store(slot_mem, ptr, val, dbg("const_matrix_store"));
+    auto arr_unknown_size_ty = arr(top_nat(), elem_type)->as<Arr>();
+    auto ptr_unknows_size = type_ptr(arr_unknown_size_ty);
+    auto arr_ptr = op_bitcast(ptr_unknows_size, ptr);
+    auto result_mat = mat(type_tn(dims.size(), elem_type), lit_int_width(32, 1 << 2), arr_ptr, dims, dbg("const_matrix"));
+    return tuple({store_mem, result_mat});
 }
 
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg){

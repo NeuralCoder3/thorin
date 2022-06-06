@@ -207,7 +207,7 @@ Sort Def::sort() const {
 }
 
 const Def* Def::arity() const {
-    if (auto mat = thorin::isa<Tag::Mat>(this)){
+    if (auto mat = thorin::isa<Tag::Tn>(this)){
         if (auto i = isa_lit(mat->arg(0))) {
             return world().lit_nat(*i + 2);
         }
