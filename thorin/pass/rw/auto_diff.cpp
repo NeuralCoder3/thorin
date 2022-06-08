@@ -63,35 +63,61 @@ const Pi* isReturning(const Pi* pi) {
     return nullptr;
 }
 
+// TODO: replace with more general handling
+//      or move to mem dialect
 DefArray vars_without_mem_cont(Lam* lam) {
     // ? 1 : 0 is superfluous (see 7.8.4 in C++ 20 standard) but increases readability
-    return lam->vars().skip(1, isReturning(lam->type()) != nullptr ? 1 : 0);
+    return lam->vars().skip(isa<Tag::Mem>(lam->var(0)->type()) ? 1 : 0, isReturning(lam->type()) != nullptr ? 1 : 0);
 }
 // multidimensional addition of values
 // needed for operation differentiation
 // we only need a multidimensional addition
 
-// TODO: replace with for axiom
 const Lam* repeatLam(World& world, const Def* count, const Lam* body) {
+    // op_for with empty accu
+    // args: mem
+    //       begin, end, step : lit
+    //       init: tuple
+    //       body: cn[mem, i32, accu, cn[mem, accu]]
+    //                                yield
+    //       break: cn[mem, accu]
+
+    // for :: [m: Nat , n: Nat , Ts: «n; *»] → Cn [Mem , Int m, Int m, Int m, «i: n; Is#i», Cn [Mem , i : Int m, «i:
+    // n; Is#i», Cn [Mem , «i: n; Is#i»]], Cn [Mem , «i: n; Is#i»]];
+    // mod, shape, types
+    // cont, body, exit
     auto loop_entry =
         world.nom_filter_lam(world.cn({world.type_mem(), world.cn(world.type_mem())}), world.dbg("loop_entry"));
-    auto loop_head     = world.nom_lam(world.cn_mem(world.type_int_width(64)), world.dbg("loop_head"));
-    auto loop          = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("loop"));
-    auto loop_end      = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("loop_exit"));
+
+    auto mem_t  = world.type_mem();
+    auto i32_t  = world.type_int_width(32);
+    auto i64_t  = world.type_int_width(64);
+
+    auto accumulator_type = world.sigma({i32_t});// dummy to avoid empty sigma
+    auto yield_type       = world.cn({mem_t, accumulator_type});
+    auto body_type        = world.cn({mem_t, i32_t, accumulator_type, yield_type});
+
+    auto forbreak = world.nom_lam(world.cn({mem_t, accumulator_type}), world.dbg("break"));
+    forbreak->app(false, loop_entry->ret_var(), {forbreak->mem_var(), world.extract(forbreak->var(1), 0_s)});
+
+    auto forbody = world.nom_lam(body_type, world.dbg("body"));
     auto loop_continue = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("loop_continue"));
-    auto cond          = world.op(ICmp::ul, loop_head->var(1), count);
 
-    loop_entry->set_body(world.app(loop_head, {loop_entry->mem_var(), world.lit_int_width(64, 0)}));
+    auto [mem, i, acctpl, yield] = forbody->vars<4>({world.dbg("mem"), world.dbg("i"), world.dbg("acctpl"), world.dbg("yield")});
+    forbody->app(false, body, {mem, i, loop_continue});
+    loop_continue->app(false, yield, {loop_continue->mem_var(),acctpl});
 
-    loop_head->branch(world.lit_false(), cond, loop, loop_end, loop_head->mem_var());
+    auto forloop = world.op_for(
+        loop_entry->mem_var(),
+        world.lit_int_width(32,0),
+        count,
+        world.lit_int_width(32,1),
+        {world.lit_int(0)},
+        forbody,
+        forbreak
+    );
 
-    auto idx = loop_head->var(1);
-    auto inc = world.op(Wrap::add, world.lit_nat(0), world.lit_int_width(64, 1), idx);
-
-    loop->set_body(world.app(body, {loop->mem_var(), idx, loop_continue}));
-
-    loop_continue->set_body(world.app(loop_head, {loop_continue->mem_var(), inc}));
-    loop_end->set_body(world.app(loop_entry->ret_var(), loop_end->mem_var()));
+    loop_entry->set_body(forloop);
 
     return loop_entry;
 }
