@@ -221,7 +221,7 @@ public:
     MatrixHelper right;
     MatrixHelper result;*/
 
-    InputHelper entry;
+
     InputHelper impl;
     MatrixHelper result;
 
@@ -231,9 +231,9 @@ public:
     DefArray indices;
     DefArray vars;
     Lam* body = nullptr;
-    Lam* impl_entry = nullptr;
+    //Lam* impl_entry = nullptr;
 
-    ConstructHelper(World& w) : entry(w), impl(w), result(w){
+    ConstructHelper(World& w) : impl(w), result(w){
 
     }
 };
@@ -251,8 +251,9 @@ public:
     void enter() override;
     const Def* rewrite_rec(const Def* current, bool convert = true);
     const Def* rewrite_rec_convert(const Def* current);
-    const Lam* const_reduction(MOp mop, ROp rop,ConstructHelper& helper);
+    //const Lam* const_reduction(MOp mop, ROp rop,ConstructHelper& helper);
     const Lam* create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type, const Def* rmode);
+    const Lam* create_MOp_impl(const Axiom* mop_axiom, const Def* elem_type, const Def* rmode);
     void construct_mat_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, const Def* alloc_rows, const Def* alloc_cols, bool flatten, ConstructHelper& constructResult);
     void construct_scalar_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, ConstructHelper& constructResult);
     void construct_void_loop(const Def* rows, const Def* cols, ConstructHelper& constructResult);

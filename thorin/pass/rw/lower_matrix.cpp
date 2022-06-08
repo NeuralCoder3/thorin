@@ -33,6 +33,21 @@ bool is_unary(MOp mop){
     }
 }
 
+bool is_binary(MOp mop){
+    switch (mop) {
+        case MOp::vec:
+        case MOp::add:
+        case MOp::sub:
+        case MOp::mul:
+        case MOp::div:{
+            return true;
+        }
+        default:{
+            return false;
+        }
+    }
+}
+
 const Def* zero(World& w, const Def* type){
     if(auto int_type = isa<Tag::Int>(type)){
         return w.lit_int(int_type, (u64)0, {});
@@ -319,6 +334,7 @@ void assign_name(Lam* lam, MOp mop, std::string suffix = ""){
     lam->set_dbg(lam->world().dbg(dbg_name));
 }
 
+/*
 const Lam* LowerMatrix::const_reduction(MOp mop, ROp rop, ConstructHelper& helper){
     auto& input = helper.entry;
 
@@ -356,7 +372,7 @@ const Lam* LowerMatrix::const_reduction(MOp mop, ROp rop, ConstructHelper& helpe
     buil.mem(none_const).app_body(none_const, helper.impl_entry);
 
     return mat_const_check;
-}
+}*/
 
 const Pi* LowerMatrix::mop_pi(MOp mop, const Def* elem_type){
 
@@ -438,52 +454,31 @@ void assign_arguments(Lam* lam, MOp mop, const Def* mmode, InputHelper& helper){
     helper.lam = lam;
 }
 
-const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type, const Def* mmode){
-    World& w = world();
-    auto signature = w.tuple({mop_axiom, elem_type, mmode});
+const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, const Def* elem_type, const Def* mmode){
+
+    auto signature = world().tuple({mop_axiom, elem_type, mmode});
 
     if(mop_variants.contains(signature)){
         return mop_variants[signature];
     }
 
-    MOp mop = MOp(mop_axiom->flags());
-
     ConstructHelper helper{world()};
 
-    Lam* entry = mop_lam(mop, elem_type, "_entry");
-    auto entry_ret_var = entry->ret_var();
-    entry->set_filter(true);
+    auto& implHelp = helper.impl;
 
-    Lam* impl_entry = buil.mem().nom_filter_lam("impl_entry");
-    helper.impl_entry = impl_entry;
+    MOp mop = MOp(mop_axiom->flags());
+
     Lam* impl = mop_lam(mop, elem_type, "_impl");
     impl->set_filter(false);
 
-    mop_variants[signature] = entry;
+    mop_variants[signature] = impl;
 
-    assign_arguments(entry, mop, mmode, helper.entry);
     assign_arguments(impl, mop, mmode, helper.impl);
-
-    buil.mem(impl_entry).flatten(entry->var()).app_body(impl_entry, impl);
-
-    auto& entryHelp = helper.entry;
-    auto& implHelp = helper.impl;
-
-    buil.mem(entry).app_body(entry, impl_entry);
 
     const Def *rows, *cols;
     if(is_scalar(mop)){
         rows = implHelp.right.getRows();
         cols = implHelp.right.getCols();
-
-        //auto const_check = buil.mem().nom_lam("const_check");
-        //auto const_exit = buil.mem().nom_filter_lam("const_exit");
-        //const_check->branch(false, entryHelp.right.isConst(), const_exit, impl_entry, const_check->mem_var());
-
-        //buil.mem(entry).app_body(entry, const_check);
-
-        //auto mat = world().op_create_matrix(elem_type, {entryHelp.right.getRows(), entryHelp.right.getCols()}, const_exit->mem_var(), true);
-        //buil.flatten(mat).app_body(const_exit, entry_ret_var);
 
         construct_mat_loop(world().type_tn(2, elem_type), rows, cols, rows, cols, true, helper);
     }else if(is_unary(mop)){
@@ -492,17 +487,10 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
 
         auto const_check = buil.mem().nom_lam("const_check");
         auto const_exit = buil.mem().nom_filter_lam("const_exit");
-        //const_check->branch(false, entryHelp.left.isConst(), const_exit, impl_entry, const_check->mem_var());
-
-        //buil.mem(entry).app_body(entry, const_check);
 
         if(mop == MOp::transpose){
-            //auto mat = world().op_create_matrix(elem_type, {entryHelp.left.getRows(), entryHelp.left.getCols()}, const_exit->mem_var(), true);
-            //buil.flatten(mat).app_body(const_exit, entry_ret_var);
-
             construct_mat_loop(world().type_tn(2, elem_type), rows, cols, cols, rows, false, helper);
         }else if(mop == MOp::sum){
-            //buil.mem(const_exit).add(world().lit_real(64, 0.0)).app_body(const_exit, entry_ret_var);
             construct_scalar_loop(elem_type, rows, cols, helper);
         }else{
             thorin::unreachable();
@@ -516,6 +504,31 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
         rows = implHelp.left.getRows();
         cols = implHelp.right.getCols();
 
+        construct_mat_loop( world().type_tn(2, elem_type), rows, cols, rows, cols, mop != MOp::vec, helper);
+    }
+
+    construct_mop( mop, elem_type, helper );
+    return impl;
+}
+
+const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type, const Def* mmode){
+    World& w = world();
+
+    MOp mop = MOp(mop_axiom->flags());
+
+    Lam* entry = mop_lam(mop, elem_type, "_entry");
+    auto entry_ret_var = entry->ret_var();
+    entry->set_filter(true);
+
+    Lam* impl_entry = buil.mem().nom_filter_lam("impl_entry");
+
+    InputHelper entryHelp(w);
+
+    assign_arguments(entry, mop, mmode, entryHelp);
+
+    buil.mem(entry).app_body(entry, impl_entry);
+
+    if(is_binary(mop)){
         auto right_mat_lam = buil.mem().nom_filter_lam("right_mat_lam");
         auto left_mat_lam = buil.mem().nom_filter_lam("left_mat_lam");
         buil.mem(left_mat_lam).add(entryHelp.left.getMat()).app_body(left_mat_lam, entry_ret_var);
@@ -541,12 +554,10 @@ const Lam* LowerMatrix::create_MOp_lam(const Axiom* mop_axiom, const Def* elem_t
             default: {
             }
         }
-
-        construct_mat_loop( world().type_tn(2, elem_type), rows, cols, rows, cols, mop != MOp::vec, helper);
     }
 
-    construct_mop( mop, elem_type, helper);
-
+    auto impl = create_MOp_impl(mop_axiom, elem_type, mmode);
+    buil.mem(impl_entry).flatten(entry->var()).app_body(impl_entry, impl);
     return entry;
 }
 
