@@ -646,6 +646,17 @@ public:
             return *this;
         }
 
+        Builder& add_if(bool cond, const Def* def){
+            if(cond){
+                v.push_back(def);
+            }
+            return *this;
+        }
+
+        Builder& add_if_non_null(const Def* def){
+            return add_if(def != nullptr, def);
+        }
+
         Builder& add(const Def* def){
             v.push_back(def);
             return *this;

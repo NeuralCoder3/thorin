@@ -7,7 +7,7 @@ namespace thorin {
 
 
 
-class LoopBuilderResult{
+class NestedLoops{
 public:
     DefArray indices;
     DefArray vars;
@@ -21,15 +21,8 @@ public:
 class LoopBuilder{
     World& world;
     DefVec ranges;
-
-    DefVec indices;
-    DefArray vars;
-    Lam* body;
-    Lam* entry;
-    Lam* finish;
     DefVec var_ty;
     DefVec var_init;
-    bool body_is_yield = false;
 
 #define b world.builder()
 public:
@@ -45,15 +38,23 @@ public:
         var_init.push_back(init);
     }
 
-    LoopBuilderResult build(){
-        finish = b.mem().add(var_ty).nom_filter_lam("loop_result");
-        entry = b.mem().nom_filter_lam("loop_entry1");
-        body = b.mem().add(var_ty).add(b.mem().add(var_ty).cn()).nom_filter_lam("loop_body");
+
+    NestedLoops build(){
+        NestedLoops nestedLoops;
+        build(nestedLoops);
+        return nestedLoops;
+    }
+
+    void build(NestedLoops& nestedLoops){
+        Lam* finish = b.mem().add(var_ty).nom_filter_lam("loop_result");
+        Lam* entry = b.mem().nom_filter_lam("loop_entry1");
+        Lam* body = b.mem().add(var_ty).add(b.mem().add(var_ty).cn()).nom_filter_lam("loop_body");
 
         b.mem(entry).add(var_init).add(finish).app_body(entry, body);
         b.add(body->vars().skip_back(1)).app_body(body, body->ret_var());
-        body_is_yield = false;
+        bool body_is_yield = false;
 
+        DefVec indices;
         for(auto range : ranges){
             auto [loop, yield] = world.repeat(range, var_ty);
 
@@ -65,12 +66,11 @@ public:
             body_is_yield = true;
             body = yield;
             indices.push_back(yield->var(1));
-            vars = yield->vars().skip(2, 1);
         }
 
-        return {
+        nestedLoops = {
             .indices = indices,
-            .vars = vars,
+            .vars = body->vars().skip(1 + (body_is_yield ? 1 : 0), 1),
             .reductions = finish->vars().skip_front(1),
             .entry = entry,
             .finish = finish,
@@ -156,10 +156,11 @@ public:
         return result;
     }
 
-    const Def* getIndex(const DefArray& indices){
+    const Def* getIndex(const DefArray& indices, bool mirror = false){
         if(indices.size() == 2){
             auto cols = getCols();
-            return world.row_col_to_index(indices[0], indices[1], cols);
+            auto switcher = mirror ? 1 : 0;
+            return world.row_col_to_index(indices[switcher - 0], indices[1 - switcher], cols);
         }else if(indices.size() == 1){
             return indices[0];
         }else{
@@ -168,11 +169,11 @@ public:
     }
 
     const Def* getIndex(const Def* row, const Def* col){
-        return getIndex({row, col});
+        return getIndex({row, col}, false);
     }
 
-    const Def* getLea(DefArray& indices){
-        auto index = getIndex(indices);
+    const Def* getLea(DefArray& indices, bool mirror = false){
+        auto index = getIndex(indices, mirror);
         return lea(index);
     }
 
@@ -215,23 +216,13 @@ public:
 
 class ConstructHelper{
 public:
-    /*MatrixHelper leftEntry;
-    MatrixHelper rightEntry;
-    MatrixHelper left;
-    MatrixHelper right;
-    MatrixHelper result;*/
-
-
     InputHelper impl;
     MatrixHelper result;
 
     const Def* raw_result = nullptr;
-    const Def* rows = nullptr;
-    const Def* cols = nullptr;
     DefArray indices;
     DefArray vars;
     Lam* body = nullptr;
-    //Lam* impl_entry = nullptr;
 
     ConstructHelper(World& w) : impl(w), result(w){
 
@@ -252,11 +243,9 @@ public:
     const Def* rewrite_rec(const Def* current, bool convert = true);
     const Def* rewrite_rec_convert(const Def* current);
     //const Lam* const_reduction(MOp mop, ROp rop,ConstructHelper& helper);
-    const Lam* create_MOp_lam(const Axiom* mop_axiom, const Def* elem_type, const Def* rmode);
+    const Lam* create_MOp_entry(const Axiom* mop_axiom, const Def* elem_type, const Def* mmode);
     const Lam* create_MOp_impl(const Axiom* mop_axiom, const Def* elem_type, const Def* rmode);
     void construct_mat_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, const Def* alloc_rows, const Def* alloc_cols, bool flatten, ConstructHelper& constructResult);
-    void construct_scalar_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, ConstructHelper& constructResult);
-    void construct_void_loop(const Def* rows, const Def* cols, ConstructHelper& constructResult);
     void construct_mop( MOp mop, const Def* elem_type, ConstructHelper& constructResult);
     Lam* rewrite_mop(const App* app, const Def* arg_wrap);
     Lam* rewrite_map(const App* app, const Def* arg_wrap);
@@ -264,8 +253,8 @@ public:
     const Def* rewrite_app(const App* app);
     void store_rec(const Def* value, const Def* mat, const Def* index, const Def*& mem);
 
-    const Pi* mop_pi(MOp mop, const Def* elem_type);
-    Lam* mop_lam(MOp mop, const Def* elem_type, const std::string& name);
+    const Pi* mop_pi(MOp mop, const Def* elem_type, bool has_result_ptr);
+    Lam* mop_lam(MOp mop, const Def* elem_type, bool has_result_ptr, const std::string& name);
 
     ChainHelper chainHelper;
 
