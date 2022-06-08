@@ -375,52 +375,29 @@ const Lam* LowerMatrix::const_reduction(MOp mop, ROp rop, ConstructHelper& helpe
 }*/
 
 const Pi* LowerMatrix::mop_pi(MOp mop, const Def* elem_type){
+    auto builder = world().builder();
+    builder.mem();
 
-    const Pi* entry;
-    if(is_scalar(mop)){
-        entry = buil.mem()
-                .add(elem_type)
-                .type_matrix(2, elem_type)
-                .add(
-                    buil.mem().type_matrix(2, elem_type).cn()
-                )
-                .cn();
-
-    }else if(is_unary(mop)){
-        auto ret_pi_buil = buil.mem();
-
-        if(mop == MOp::transpose){
-            ret_pi_buil.type_matrix(2, elem_type);
-        }else{
-            ret_pi_buil.add(elem_type);
-        }
-
-        entry = buil.mem()
-            .type_matrix(2, elem_type)
-            .add(
-                ret_pi_buil.cn()
-            )
-            .cn();
-
-    }else if(mop == MOp::init){
-        entry = buil.mem()
-            .add(elem_type)
-            .type_matrix(2, elem_type)
-            .add(
-                buil.mem().cn()
-            )
-            .cn();
-    }else{
-        entry = buil
-            .mem()
-            .type_matrix(2, elem_type)
-            .type_matrix(2, elem_type)
-            .add(
-                buil.mem().type_matrix(2, elem_type).cn()
-            ).cn();
+    if(is_scalar(mop) || mop == MOp::init){
+        builder.add(elem_type);
+    }else if(is_binary(mop)){
+        builder.type_matrix(2, elem_type);
     }
 
-    return entry;
+    builder.type_matrix(2, elem_type);
+
+    auto result_builder = world().builder();
+    result_builder.mem();
+
+    if(mop == MOp::sum){
+        result_builder.add(elem_type);
+    }else if(mop != MOp::init){
+        result_builder.type_matrix(2, elem_type);
+    }
+
+    builder.add(result_builder.cn());
+
+    return builder.cn();
 }
 
 Lam* LowerMatrix::mop_lam(MOp mop, const Def* elem_type, const std::string& name){
@@ -473,7 +450,7 @@ const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, const Def* elem_
 
     mop_variants[signature] = impl;
 
-    assign_arguments(impl, mop, mmode, helper.impl);
+    assign_arguments(impl, mop, mmode, implHelp);
 
     const Def *rows, *cols;
     if(is_scalar(mop)){
