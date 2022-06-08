@@ -7,11 +7,18 @@
 
 namespace thorin {
 
-//#define THORIN_UNREACHABLE unreachable()
+
+/// @name macros - some useful macro definitions
+///@{
 #define THORIN_UNREACHABLE        assert(false && "Unreachable")
 #define dlog(world, ...)          world.DLOG(__VA_ARGS__)
 #define type_dump(world, name, d) world.DLOG("{} {} : {}", name, d, d->type())
+///@}
+// end macros
 
+/// @name eviction - functions that are general enough to be replaced or moved out to other places
+///@{
+// TODO: move to world
 size_t getDim(const Def* def) {
     // TODO: test def, idef, tuple
     if (auto arr = def->isa<Arr>()) {
@@ -25,21 +32,19 @@ size_t getDim(const Def* def) {
     }
 }
 
-bool isFatPtrType(World& world_, const Def* type) {
-    if (auto sig = type->isa<Sigma>(); sig && sig->num_ops() == 2) {
-        // TODO: maybe use original type to detect
-
-        //        isFatPtr = isa_sized_type(sig->op(0));
-        //
-        //
-        if (auto ptr = isa<Tag::Ptr>(sig->op(1)); ptr && isa<Tag::Int>(sig->op(0))) {
-            auto [pointee, addr_space] = ptr->arg()->projs<2>();
-            if (pointee->isa<Arr>()) return true;
-        }
+// TODO: replace with correct world method
+const Pi* isReturning(const Pi* pi) {
+    if (pi->is_cn() && pi->num_doms() > 0) {
+        auto ret = pi->dom(pi->num_doms() - 1);
+        if (auto ret_pi = ret->isa<Pi>(); ret_pi != nullptr && ret_pi->is_cn()) return ret_pi;
     }
-    return false;
+
+    return nullptr;
 }
 
+// TODO: use tuple.cpp flatten
+//const Def* flatten(const Def* def);
+//size_t flatten(DefVec& ops, const Def* def, bool flatten_sigmas = true);
 DefArray flat_tuple(const DefArray& defs, bool preserveFatPtr = false) {
     // or use concat
     std::vector<const Def*> v;
@@ -54,25 +59,17 @@ DefArray flat_tuple(const DefArray& defs, bool preserveFatPtr = false) {
     return {v};
 }
 
-const Pi* isReturning(const Pi* pi) {
-    if (pi->is_cn() && pi->num_doms() > 0) {
-        auto ret = pi->dom(pi->num_doms() - 1);
-        if (auto ret_pi = ret->isa<Pi>(); ret_pi != nullptr && ret_pi->is_cn()) return ret_pi;
-    }
-
-    return nullptr;
-}
-
 // TODO: replace with more general handling
 //      or move to mem dialect
 DefArray vars_without_mem_cont(Lam* lam) {
     // ? 1 : 0 is superfluous (see 7.8.4 in C++ 20 standard) but increases readability
     return lam->vars().skip(isa<Tag::Mem>(lam->var(0)->type()) ? 1 : 0, isReturning(lam->type()) != nullptr ? 1 : 0);
 }
-// multidimensional addition of values
-// needed for operation differentiation
-// we only need a multidimensional addition
 
+// TODO: move to for dialect
+// special case: count, body =>
+// for(int i=0;i<count;i++) body(i)
+// repeat n
 const Lam* repeatLam(World& world, const Def* count, const Lam* body) {
     // op_for with empty accu
     // args: mem
@@ -105,6 +102,7 @@ const Lam* repeatLam(World& world, const Def* count, const Lam* body) {
 
     auto [mem, i, acctpl, yield] = forbody->vars<4>({world.dbg("mem"), world.dbg("i"), world.dbg("acctpl"), world.dbg("yield")});
     forbody->app(false, body, {mem, i, loop_continue});
+    // use lam application (beta red/specialization) for shorter code
     loop_continue->app(false, yield, {loop_continue->mem_var(),acctpl});
 
     auto forloop = world.op_for(
@@ -122,6 +120,7 @@ const Lam* repeatLam(World& world, const Def* count, const Lam* body) {
     return loop_entry;
 }
 
+// delayed for loop that leaves the body to be filled in by the user
 std::pair<const Lam*, Lam*> repeatLam(World& world, const Def* count) {
     Lam* body = world.nom_filter_lam(world.cn({world.type_mem(), world.type_int_width(64), world.cn(world.type_mem())}),
                                      world.dbg("loop_body"));
@@ -129,8 +128,56 @@ std::pair<const Lam*, Lam*> repeatLam(World& world, const Def* count) {
     return {loop, body};
 }
 
+// TODO: move to array
+// TODO: expect array
+// TODO: needed? try to avoid and remove it
+// copies inputArr to outputArr of size size
+const Def* copy(World& world, const Def* inputArr, const Def* outputArr, const Def* size) {
+    auto [loop, loop_body] = repeatLam(world, size);
+
+    auto idx = loop_body->var(1);
+
+    auto input_p  = world.op_lea(inputArr, idx, world.dbg("a_p"));
+    auto output_p = world.op_lea(outputArr, idx, world.dbg("stencil_p"));
+
+    auto loop_mem = loop_body->mem_var();
+
+    auto [load_mem, loadedValue] = world.op_load(loop_mem, input_p)->projs<2>();
+    auto storeMem                = world.op_store(load_mem, output_p, loadedValue);
+
+    loop_body->set_body(world.app(loop_body->ret_var(), storeMem));
+
+    return loop;
+}
+///@}
+// end eviction
+
+
+/// @name utility - functions that are adjacent to autodiff but not necessarily interlinked
+///@{
+bool isFatPtrType(World& world_, const Def* type) {
+    if (auto sig = type->isa<Sigma>(); sig && sig->num_ops() == 2) {
+        // TODO: maybe use original type to detect
+
+        //        isFatPtr = isa_sized_type(sig->op(0));
+        //
+        //
+        if (auto ptr = isa<Tag::Ptr>(sig->op(1)); ptr && isa<Tag::Int>(sig->op(0))) {
+            auto [pointee, addr_space] = ptr->arg()->projs<2>();
+            if (pointee->isa<Arr>()) return true;
+        }
+    }
+    return false;
+}
+
+
+// multidimensional addition of values
+// needed for operation differentiation
+// we only need a multidimensional addition
+
 // TODO: Currently: sum takes mem, adds a and b and calls cont
 // TODO: possible: sum := \lambda mem a b cont. cont(mem, a+b)
+// TODO: revisit and simplify
 const Lam* vec_add(World& world, const Def* a, const Def* b, const Def* cont) {
     if (auto arr = a->type()->isa<Arr>(); arr && !(arr->shape()->isa<Lit>())) { THORIN_UNREACHABLE; }
 
@@ -234,213 +281,6 @@ const Lam* vec_add(World& world, const Def* a, const Def* b, const Def* cont) {
     return sum_pb;
 }
 
-// TODO: comment
-const Def* copy(World& world, const Def* inputArr, const Def* outputArr, const Def* size) {
-    auto [loop, loop_body] = repeatLam(world, size);
-
-    auto idx = loop_body->var(1);
-
-    auto input_p  = world.op_lea(inputArr, idx, world.dbg("a_p"));
-    auto output_p = world.op_lea(outputArr, idx, world.dbg("stencil_p"));
-
-    auto loop_mem = loop_body->mem_var();
-
-    auto [load_mem, loadedValue] = world.op_load(loop_mem, input_p)->projs<2>();
-    auto storeMem                = world.op_store(load_mem, output_p, loadedValue);
-
-    loop_body->set_body(world.app(loop_body->ret_var(), storeMem));
-
-    return loop;
-}
-
-// TODO: comment
-class Flow {
-    Lam* lam_ = nullptr;
-    Lam* init_;
-    const Def* mem_;
-    World& world_;
-    u32 length = 0;
-
-public:
-    Flow(World& world)
-        : world_(world) {
-        init_ = world_.nom_filter_lam(world_.cn(world_.type_mem()), world_.dbg("flow_init_11"));
-        assign(init_);
-    }
-
-    Flow(World& world, Lam* init)
-        : world_(world) {
-        init_ = init;
-        assign(init_);
-    }
-
-    void assign(Lam* lam) {
-        assert(lam_ == nullptr || lam_->is_set());
-        assert(!lam->body());
-        lam_ = lam;
-        mem_ = lam->mem_var();
-    }
-
-    void runAfter(const Lam* enter, Lam* leave) {
-        lam_->set_body(world_.app(enter, mem_));
-        assign(leave);
-    }
-
-    const Lam* runAfter(const Lam* enter) { return runAfter(enter, mem_); }
-
-    const Lam* runAfter(const Lam* enter, const Def* mem) {
-        assert(lam_);
-        length++;
-        auto callback = world_.nom_filter_lam(world_.cn(world_.type_mem()), world_.dbg("flow_init"));
-        if (auto lam = enter->doms().back()->isa<Pi>()) {
-            lam_->set_body(world_.app(enter, {mem, callback}));
-        } else {
-            lam_->set_body(world_.app(enter, mem));
-        }
-
-        assign(callback);
-        return callback;
-    }
-
-    void finish(const Def* enter, Defs args = {}) {
-        length++;
-        auto arguments = world_.tuple(flat_tuple({mem_, world_.tuple(args)}));
-        lam_->set_body(world_.app(enter, arguments));
-        lam_ = nullptr;
-    }
-
-    const Lam* getInit() { return init_; }
-};
-
-const Def*
-derive_numeric_walk(World& world, const Def* ref, const Def* h, const Lam* f, const Def* fx, const Def* s, Flow& flow) {
-    // TODO: use vec_add + OH to avoid code duplication
-    // it will be slower for arrays but in general arrays have to be copied
-    auto fun_result_pi = f->doms().back()->as<Pi>();
-
-    if (auto ptr = isa<Tag::Ptr>(ref->type())) {
-        auto [ty, addr_space] = ptr->arg()->projs<2>();
-
-        auto offset_param = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("offset_param"));
-
-        // save value for restore later
-        auto [save_mem, save] = world.op_load(offset_param->mem_var(), ref)->projs<2>();
-        auto returnLam        = flow.runAfter(offset_param);
-        offset_param->set_body(world.app(returnLam, save_mem));
-
-        auto masked_f =
-            world.nom_filter_lam(world.cn({world.type_mem(), save->type(), fun_result_pi}), world.dbg("offset_param"));
-
-        // change value at ptr location to *p + h
-        auto store_mem = world.op_store(masked_f->mem_var(), ref, masked_f->var(1));
-
-        // restore value at ptr location back to original value
-        auto restoreLam  = world.nom_filter_lam(fun_result_pi, world.dbg("clean_up"));
-        auto retored_mem = world.op_store(restoreLam->mem_var(), ref, save);
-
-        restoreLam->set_body(world.app(masked_f->ret_var(), {retored_mem, restoreLam->var(1)}));
-        masked_f->set_body(world.app(f, {store_mem, ref, restoreLam}));
-
-        return derive_numeric_walk(world, save, h, masked_f, fx, s, flow);
-    }
-
-    if (isFatPtrType(world, ref->type())) {
-        auto [size_a, arr_ref] = ref->projs<2>();
-
-        // allocate array for resulting gradients
-        auto alloc_gradients = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("alloc_gradients"));
-
-        auto arr_size_nat                 = world.op_bitcast(world.type_nat(), size_a);
-        auto [arr_ty, arr_addr_space]     = as<Tag::Ptr>(arr_ref->type())->arg()->projs<2>();
-        auto arr_sized_ty                 = world.arr(arr_size_nat, arr_ty->as<Arr>()->body())->as<Arr>();
-        auto [gradient_mem, gradient_arr] = world.op_alloc(arr_sized_ty, alloc_gradients->mem_var())->projs<2>();
-        gradient_arr                      = world.op_bitcast(arr_ref->type(), gradient_arr);
-
-        const Lam* returnLam = flow.runAfter(alloc_gradients);
-        alloc_gradients->set_body(world.app(returnLam, gradient_mem));
-
-        auto [loop, loop_body] = repeatLam(world, size_a);
-
-        flow.runAfter(loop);
-
-        auto loop_mem      = loop_body->mem_var();
-        auto idx           = loop_body->var(1);
-        auto continue_loop = loop_body->ret_var();
-
-        auto ref_p = world.op_lea(arr_ref, idx, world.dbg("ref_p"));
-
-        auto masked_f =
-            world.nom_filter_lam(world.cn({world.type_mem(), ref_p->type(), fun_result_pi}), world.dbg("masked_f"));
-        masked_f->set_body(world.app(f, {masked_f->mem_var(), ref, masked_f->ret_var()}));
-
-        Flow loopFlow{world, loop_body};
-        auto result            = derive_numeric_walk(world, ref_p, h, masked_f, fx, s, loopFlow);
-        auto continue_loop_lam = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("continue_loop_lam"));
-
-        auto lea_gradient       = world.op_lea(gradient_arr, idx);
-        auto store_gradient_mem = world.op_store(continue_loop_lam->mem_var(), lea_gradient, result);
-
-        continue_loop_lam->set_body(world.app(continue_loop, store_gradient_mem));
-
-        loopFlow.finish(continue_loop_lam);
-
-        return world.tuple({size_a, gradient_arr});
-    }
-
-    auto dim = getDim(ref);
-
-    if (dim == 1) {
-        if (isa<Tag::Int>(ref->type())) {
-            return world.lit_real(64, 0.0);
-        } else {
-            auto f_call = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("f_call"));
-
-            auto quotient = world.nom_filter_lam(fun_result_pi, world.dbg("quotient"));
-            auto result   = world.nom_filter_lam(fun_result_pi, world.dbg("result"));
-
-            // call function with value offset
-            f_call->set_body(world.app(f, {f_call->mem_var(), world.op(ROp::add, (nat_t)0, ref, h), quotient}));
-
-            // differential quotient
-            auto gradient = world.op(
-                ROp::mul, (nat_t)0,
-                world.op(ROp::div, (nat_t)0,
-                         world.op(Conv::r2r, ref->type(), world.op(ROp::sub, (nat_t)0, quotient->var(1), fx)), h),
-                s);
-
-            quotient->set_body(world.app(result, {quotient->mem_var(), gradient}));
-            flow.runAfter(f_call, result);
-            return result->var(1);
-        }
-    }
-
-    DefArray tuple_result{dim};
-
-    for (size_t i = 0; i < dim; ++i) {
-        // adds component-wise both vectors
-        // use op?
-        auto current = world.extract(ref, i);
-
-        DefArray ops{dim + 2};
-        auto masked_f =
-            world.nom_filter_lam(world.cn({world.type_mem(), current->type(), fun_result_pi}), world.dbg("masked_f"));
-
-        for (size_t j = 0; j < dim; ++j) {
-            if (j != i) { ops[j + 1] = world.extract(ref, j); }
-        }
-
-        ops[0]       = masked_f->mem_var();
-        ops[i + 1]   = masked_f->var(1);
-        ops[dim + 1] = masked_f->ret_var();
-
-        masked_f->set_body(world.app(f, ops));
-
-        tuple_result[i] = derive_numeric_walk(world, current, h, masked_f, fx, s, flow);
-    }
-
-    return world.tuple(tuple_result);
-}
-
 std::pair<const Def*, const Def*>
 lit_of_type(World& world, const Def* mem, const Def* type, const Def* like, r64 lit, const Def* dummy) {
     // TODO: a monad would be easier for memory
@@ -494,16 +334,16 @@ lit_of_type(World& world, const Def* mem, const Def* type, const Def* like, r64 
     else if (auto a = type->isa<Arr>()) {
         auto dim = a->shape()->as<Lit>()->get<uint8_t>();
         DefArray ops{dim, [&](auto) {
-                         auto [nmem, op] = lit_of_type(world, mem, a->body(), like, lit, dummy);
-                         mem             = nmem;
-                         return op;
-                     }};
+          auto [nmem, op] = lit_of_type(world, mem, a->body(), like, lit, dummy);
+          mem             = nmem;
+          return op;
+        }};
         litdef = world.tuple(ops);
     } else if (auto sig = type->isa<Sigma>()) {
         auto zops = sig->ops().map([&](auto op, auto index) {
-            auto [nmem, zop] = lit_of_type(world, mem, op, like->proj(index), lit, dummy);
-            mem              = nmem;
-            return zop;
+          auto [nmem, zop] = lit_of_type(world, mem, op, like->proj(index), lit, dummy);
+          mem              = nmem;
+          return zop;
         });
 
         litdef = world.tuple(zops);
@@ -532,6 +372,8 @@ std::pair<const Def*, const Def*> ZERO(World& world, const Def* mem, const Def* 
 std::pair<const Def*, const Def*> ONE(World& world, const Def* mem, const Def* def) {
     return ONE(world, mem, def, nullptr);
 }
+
+// TODO: revisit
 std::pair<const Def*, const Def*>
 oneHot(World& world_, const Def* mem, u64 idx, const Def* shape, const Def* like, const Def* s) {
     auto [rmem, v] = ZERO(world_, mem, shape, like, s);
@@ -571,83 +413,101 @@ oneHot(World& world_, const Def* mem, const Def* idx, const Def* shape, const De
     }
 }
 
-namespace {
+const Lam* lam_fat_ptr_wrap(World& world, const Lam* lam) {
+    bool changed = false;
+    DefArray doms{lam->num_doms()};
+    DefArray src_doms = lam->doms();
+    size_t i          = 0;
+    for (auto dom : src_doms) {
+        if (auto ptr = isa<Tag::Ptr>(dom)) {
+            changed = true;
+            doms[i] = world.sigma({world.type_int_width(64), ptr});
+        } else {
+            doms[i] = dom;
+        }
 
-class AutoDiffer {
-public:
-    AutoDiffer(World& world, const Def2Def& src_to_dst, const Def* A_)
-        : world_{world}
-        , src_to_dst_{src_to_dst}
-        , A_src{A_}
-        , A{world.tangent_type(A_, false)} {
-        // initializes the differentiation for a function of type A -> B
-        // src_to_dst expects the parameters of the source lambda to be mapped
-        //  (this property is only used later on)
+        doms[i]->dump();
 
-        // the general principle is that every expression is a function
-        //   and has a gradient in respect from its outputs to its inputs
-        //   for instance add:R²->R has a pullback R->R²
-        //   describing how the result depends on the two inputs
-        //      (the derivation of the output w.r. to the inputs)
-        //   we mostly directly combine building techniques and chain rule applications
-        //   into the basic construction to derive the wanted derivative
-        //   w.r. to the function inputs of type A for the rev_diff call we currently are working on
-        //   in that sense every expression can be seen as a function from function input to some
-        //   intermediate result
-        //   Therefore, we need to keep track of A (but B is mostly not important)
-
-        // combination of derivatives is in most parts simply multiplication and application
-        // the pullbacks handle this for us as the scalar is applied inside the derivative
-        // and scales the derivative
-        // Therefore, composition of two pullbacks corresponds to (matrix-)multiplication
-        // and represents an application of the chain rule
-        // the nested nature emulates the backward adjoint trace used in backpropagation
-        // also see "Demystifying Differentiable Programming: Shift/Reset the Penultimate Backpropagator"
-        // for a similar approach but with shift and reset primitives
+        i++;
     }
 
-    const Def* reverse_diff(Lam* src); // top level function to compute the reverse differentiation of a function
-private:
-    const Def* j_wrap(const Def* def); // 'identity' (except for lambdas, functions, and applications) traversal
-                                       // annotating the pullbacks
-    const Def* j_wrap_convert(const Def* def);
-    const Def*
-    j_wrap_rop(ROp op,
-               const Def* a,
-               const Def* b); // pullback computation for predefined functions, specifically operations like +, -, *, /
-    void derive_external(const Lam* fun, Lam* pb, Lam* fw, Lam* res_lam);
-    void
-    derive_numeric(const Lam* fun, Lam* source, const Def* target, Lam* fw, const Def* fx, const Def* s, r32 delta);
+    if (changed) {
+        auto cn      = world.cn(doms);
+        Lam* wrapper = world.nom_filter_lam(cn, world.dbg("wrapper"));
 
-    const Def* zero_pb(const Def* type, const Def* dbg);
-    const Def* j_wrap_tuple(DefArray tuple);
+        i = 0;
+        DefArray arguments{lam->num_doms()};
 
-    const Def* seen(const Def* src); // lookup in the map
+        for (auto dom : src_doms) {
+            auto var = wrapper->var(i);
+            if (auto ptr = isa<Tag::Ptr>(dom)) {
+                auto [size, arr] = var->projs<2>();
+                arguments[i]     = arr;
+            } else {
+                arguments[i] = var;
+            }
 
-    // chains cn[:mem, A, cn[:mem, B]] and cn[:mem, B, cn[:mem, C]] to a toplevel cn[:mem, A, cn[:mem, C]]
-    const Def* chain(const Def* a, const Def* b);
-    const Pi* createPbType(const Def* A, const Def* B);
-    const Def* extract_pb(const Def* j_extract, const Def* tuple);
+            i++;
+        }
 
-    World& world_;
-    Def2Def src_to_dst_;           // mapping old def to new def
-    DefMap<const Def*> pullbacks_; // <- maps a *copied* src term (a dst term) to its pullback function
-    DefMap<const Def*> pointer_map;
-    DefMap<const Def*> structure_map;
-    const Def *A, *A_src, *zero_grad; // input type
+        wrapper->set_body(world.app(lam, arguments));
 
-    void initArg(const Def* dst);
-    const Def* ptrSlot(const Def* ty, const Def* mem);
-    std::pair<const Def*, const Def*>
-    reloadPtrPb(const Def* mem, const Def* ptr, const Def* dbg = {}, bool generateLoadPb = false);
+        return wrapper;
+    }
 
-    // next mem object to use / most recent memory object
-    // no problem as control flow is handled by cps
-    // alternative: j_wrap returns mem object
-    // only set at memory alternating operations
-    //   load, store, slot, alloc, function arg
-    const Def* current_mem;
-};
+    return lam;
+}
+///@}
+// end utility
+
+
+/// @name autodiffer utility - the autodiff translation of one unit
+///@{
+
+const Def* AutoDiffer::zero_pb(const Def* type, const Def* dbg) {
+    auto zeropi = createPbType(A, type);
+    auto zeropb = world_.nom_filter_lam(zeropi, world_.dbg(dbg));
+    auto rmem   = zeropb->mem_var();
+    auto zero   = zero_grad;
+    // TODO: inline in ZERO?
+    DefArray args = flat_tuple({rmem, zero});
+    zeropb->set_body(world_.app(zeropb->ret_var(), args));
+    return zeropb;
+}
+
+void AutoDiffer::initArg(const Def* dst) {
+    // TODO: iterate (recursively) over tuple
+    // create shadow slots for pointersq
+
+    auto arg_ty = dst->type();
+    // we need to initialize the shadow ptr slot for
+    // ptr args here instead of at store & load (first usage)
+    // as the slot needs the correct pullback (from the ptr object)
+    // to be stored and loaded
+    // when the ptr shadow slot is accessed it has to have the correct
+    // content in the current memory object used to load
+    // this is only possible at a common point before all usages
+    //   => creation / first mentioning
+    if (auto ptr = isa<Tag::Ptr>(arg_ty)) {
+        auto ty               = ptr->arg()->projs<2>()[0];
+        auto dst_mem          = current_mem;
+        auto [pb_mem, pb_ptr] = ptrSlot(arg_ty, dst_mem)->projs<2>();
+        pointer_map[dst]      = pb_ptr;
+        // write the pb into the slot
+        auto pb_store_mem = world_.op_store(pb_mem, pb_ptr, pullbacks_[dst], world_.dbg("pb_arg_id_store"));
+        current_mem       = pb_store_mem;
+        return;
+    }
+
+    // prepare extracts
+}
+const Def* AutoDiffer::ptrSlot(const Def* ty, const Def* mem) {
+    auto pbty = createPbType(A, ty);
+    //                    auto ptrpbty = createPbType(A,world_.type_ptr(ty));
+    auto pb_slot = world_.op_slot(pbty, mem, world_.dbg("ptr_slot"));
+    return pb_slot; // split into pb_mem, pb_ptr
+}
+
 const Def* AutoDiffer::j_wrap_tuple(DefArray tuple) {
     // the pullback of a tuple is tuple of pullbacks for each component
     // we need to distinguish [mem, r32] from <<2::nat,r32>>
@@ -823,6 +683,12 @@ AutoDiffer::reloadPtrPb(const Def* mem, const Def* ptr, const Def* dbg, bool gen
     pullbacks_[ptr]                 = pb_load_fun;
     return {pb_load_mem, pb_load_fun};
 }
+///@}
+// end autodiffer utility
+
+/// @name autodiffer - main functions of autodiffer
+///@{
+
 // top level entry point after creating the AutoDiffer object
 // a mapping of source arguments to dst arguments is expected in src_to_dst
 const Def* AutoDiffer::reverse_diff(Lam* src) {
@@ -859,38 +725,6 @@ const Def* AutoDiffer::reverse_diff(Lam* src) {
     return dst;
 }
 
-void AutoDiffer::initArg(const Def* dst) {
-    // TODO: iterate (recursively) over tuple
-    // create shadow slots for pointersq
-
-    auto arg_ty = dst->type();
-    // we need to initialize the shadow ptr slot for
-    // ptr args here instead of at store & load (first usage)
-    // as the slot needs the correct pullback (from the ptr object)
-    // to be stored and loaded
-    // when the ptr shadow slot is accessed it has to have the correct
-    // content in the current memory object used to load
-    // this is only possible at a common point before all usages
-    //   => creation / first mentioning
-    if (auto ptr = isa<Tag::Ptr>(arg_ty)) {
-        auto ty               = ptr->arg()->projs<2>()[0];
-        auto dst_mem          = current_mem;
-        auto [pb_mem, pb_ptr] = ptrSlot(arg_ty, dst_mem)->projs<2>();
-        pointer_map[dst]      = pb_ptr;
-        // write the pb into the slot
-        auto pb_store_mem = world_.op_store(pb_mem, pb_ptr, pullbacks_[dst], world_.dbg("pb_arg_id_store"));
-        current_mem       = pb_store_mem;
-        return;
-    }
-
-    // prepare extracts
-}
-const Def* AutoDiffer::ptrSlot(const Def* ty, const Def* mem) {
-    auto pbty = createPbType(A, ty);
-    //                    auto ptrpbty = createPbType(A,world_.type_ptr(ty));
-    auto pb_slot = world_.op_slot(pbty, mem, world_.dbg("ptr_slot"));
-    return pb_slot; // split into pb_mem, pb_ptr
-}
 
 void AutoDiffer::derive_numeric(const Lam* fun,
                                 Lam* source,
@@ -964,11 +798,11 @@ void AutoDiffer::derive_external(const Lam* fun, Lam* pb, Lam* fw, Lam* res_lam)
         auto scal_mul_wrap = world_.nom_filter_lam(return_type, world_.dbg("scal_mul"));
 
         scal_mul_wrap->set_body(world_.app(pb->ret_var(), scal_mul_wrap->vars().map([&](auto var, size_t i) {
-            if (i == 0) {
-                return var;
-            } else {
-                return world_.op(ROp::mul, (nat_t)0, world_.op_bitcast(var->type(), scal), var);
-            }
+          if (i == 0) {
+              return var;
+          } else {
+              return world_.op(ROp::mul, (nat_t)0, world_.op_bitcast(var->type(), scal), var);
+          }
         })));
 
         type_dump(world_, "found user diffed function", user_defined_diff);
@@ -1028,16 +862,9 @@ void AutoDiffer::derive_external(const Lam* fun, Lam* pb, Lam* fw, Lam* res_lam)
     }
 }
 
-const Def* AutoDiffer::zero_pb(const Def* type, const Def* dbg) {
-    auto zeropi = createPbType(A, type);
-    auto zeropb = world_.nom_filter_lam(zeropi, world_.dbg(dbg));
-    auto rmem   = zeropb->mem_var();
-    auto zero   = zero_grad;
-    // TODO: inline in ZERO?
-    DefArray args = flat_tuple({rmem, zero});
-    zeropb->set_body(world_.app(zeropb->ret_var(), args));
-    return zeropb;
-}
+
+// seen is a simple lookup in the src_to_dst mapping
+const Def* AutoDiffer::seen(const Def* src) { return src_to_dst_.contains(src) ? src_to_dst_[src] : nullptr; }
 
 // implement differentiation for each expression
 // an expression is transformed by identity into itself but using the "new" definitions
@@ -1087,50 +914,6 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
     return dst;
 }
 
-const Lam* lam_fat_ptr_wrap(World& world, const Lam* lam) {
-    bool changed = false;
-    DefArray doms{lam->num_doms()};
-    DefArray src_doms = lam->doms();
-    size_t i          = 0;
-    for (auto dom : src_doms) {
-        if (auto ptr = isa<Tag::Ptr>(dom)) {
-            changed = true;
-            doms[i] = world.sigma({world.type_int_width(64), ptr});
-        } else {
-            doms[i] = dom;
-        }
-
-        doms[i]->dump();
-
-        i++;
-    }
-
-    if (changed) {
-        auto cn      = world.cn(doms);
-        Lam* wrapper = world.nom_filter_lam(cn, world.dbg("wrapper"));
-
-        i = 0;
-        DefArray arguments{lam->num_doms()};
-
-        for (auto dom : src_doms) {
-            auto var = wrapper->var(i);
-            if (auto ptr = isa<Tag::Ptr>(dom)) {
-                auto [size, arr] = var->projs<2>();
-                arguments[i]     = arr;
-            } else {
-                arguments[i] = var;
-            }
-
-            i++;
-        }
-
-        wrapper->set_body(world.app(lam, arguments));
-
-        return wrapper;
-    }
-
-    return lam;
-}
 
 const Def* AutoDiffer::j_wrap_convert(const Def* def) {
     if (auto var = def->isa<Var>()) {
@@ -1583,12 +1366,12 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
             if (d_arg->type()->isa<Sigma>() && !d_arg->isa<Var>()) {
                 auto count = getDim(d_arg);
                 ad_args    = world_.tuple(DefArray(count + 1, [&](auto i) {
-                    if (i < count) {
-                        return world_.extract(d_arg, (u64)i, world_.dbg("ad_arg"));
-                    } else {
-                        return pullbacks_[d_arg];
-                    }
-                   }));
+                  if (i < count) {
+                      return world_.extract(d_arg, (u64)i, world_.dbg("ad_arg"));
+                  } else {
+                      return pullbacks_[d_arg];
+                  }
+                }));
             } else {
                 // var (lambda completely with all arguments) and other (non tuple)
                 ad_args = d_arg;
@@ -1684,7 +1467,7 @@ const Def* AutoDiffer::j_wrap_rop(ROp op, const Def* a, const Def* b) {
             middle->set_body(world_.app(bpb, {middle->mem_var(), pb->var(1), end}));
             break;
         }
-        // ∇(a - b) = λz.∂a(z * (0 + 1)) - ∂b(z * (0 + 1))
+            // ∇(a - b) = λz.∂a(z * (0 + 1)) - ∂b(z * (0 + 1))
         case ROp::sub: {
             // φ-(z,ret):
             //  pba(z*1,φm-)
@@ -1751,11 +1534,13 @@ const Def* AutoDiffer::j_wrap_rop(ROp op, const Def* a, const Def* b) {
     pullbacks_[dst] = pb;
     return dst;
 }
-// seen is a simple lookup in the src_to_dst mapping
-const Def* AutoDiffer::seen(const Def* src) { return src_to_dst_.contains(src) ? src_to_dst_[src] : nullptr; }
 
-} // namespace
+///@}
+// end autodiffer
 
+
+/// @name autodiff - management of invocation of autodiffer for the autodiff pass
+///@{
 // rewrites applications of the form 'rev_diff function' into the differentiation of f
 const Def* AutoDiff::rewrite(const Def* def) {
     // isa<Tag::RevDiff> is not applicable here
@@ -1810,5 +1595,250 @@ const Def* AutoDiff::rewrite(const Def* def) {
     }
     return def;
 }
+///@}
+// end autodiff
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// TODO: document and explain usage
+class Flow {
+    Lam* lam_ = nullptr;
+    Lam* init_;
+    const Def* mem_;
+    World& world_;
+    u32 length = 0;
+
+public:
+    Flow(World& world)
+        : world_(world) {
+        init_ = world_.nom_filter_lam(world_.cn(world_.type_mem()), world_.dbg("flow_init_11"));
+        assign(init_);
+    }
+
+    Flow(World& world, Lam* init)
+        : world_(world) {
+        init_ = init;
+        assign(init_);
+    }
+
+    void assign(Lam* lam) {
+        assert(lam_ == nullptr || lam_->is_set());
+        assert(!lam->body());
+        lam_ = lam;
+        mem_ = lam->mem_var();
+    }
+
+    void runAfter(const Lam* enter, Lam* leave) {
+        lam_->set_body(world_.app(enter, mem_));
+        assign(leave);
+    }
+
+    const Lam* runAfter(const Lam* enter) { return runAfter(enter, mem_); }
+
+    const Lam* runAfter(const Lam* enter, const Def* mem) {
+        assert(lam_);
+        length++;
+        auto callback = world_.nom_filter_lam(world_.cn(world_.type_mem()), world_.dbg("flow_init"));
+        if (auto lam = enter->doms().back()->isa<Pi>()) {
+            lam_->set_body(world_.app(enter, {mem, callback}));
+        } else {
+            lam_->set_body(world_.app(enter, mem));
+        }
+
+        assign(callback);
+        return callback;
+    }
+
+    void finish(const Def* enter, Defs args = {}) {
+        length++;
+        auto arguments = world_.tuple(flat_tuple({mem_, world_.tuple(args)}));
+        lam_->set_body(world_.app(enter, arguments));
+        lam_ = nullptr;
+    }
+
+    const Lam* getInit() { return init_; }
+};
+
+// TODO: document and explain usage
+const Def* derive_numeric_walk(World& world, const Def* ref, const Def* h, const Lam* f, const Def* fx, const Def* s, Flow& flow) {
+    // TODO: use vec_add + OH to avoid code duplication
+    // it will be slower for arrays but in general arrays have to be copied
+    auto fun_result_pi = f->doms().back()->as<Pi>();
+
+    if (auto ptr = isa<Tag::Ptr>(ref->type())) {
+        auto [ty, addr_space] = ptr->arg()->projs<2>();
+
+        auto offset_param = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("offset_param"));
+
+        // save value for restore later
+        auto [save_mem, save] = world.op_load(offset_param->mem_var(), ref)->projs<2>();
+        auto returnLam        = flow.runAfter(offset_param);
+        offset_param->set_body(world.app(returnLam, save_mem));
+
+        auto masked_f =
+            world.nom_filter_lam(world.cn({world.type_mem(), save->type(), fun_result_pi}), world.dbg("offset_param"));
+
+        // change value at ptr location to *p + h
+        auto store_mem = world.op_store(masked_f->mem_var(), ref, masked_f->var(1));
+
+        // restore value at ptr location back to original value
+        auto restoreLam  = world.nom_filter_lam(fun_result_pi, world.dbg("clean_up"));
+        auto retored_mem = world.op_store(restoreLam->mem_var(), ref, save);
+
+        restoreLam->set_body(world.app(masked_f->ret_var(), {retored_mem, restoreLam->var(1)}));
+        masked_f->set_body(world.app(f, {store_mem, ref, restoreLam}));
+
+        return derive_numeric_walk(world, save, h, masked_f, fx, s, flow);
+    }
+
+    if (isFatPtrType(world, ref->type())) {
+        auto [size_a, arr_ref] = ref->projs<2>();
+
+        // allocate array for resulting gradients
+        auto alloc_gradients = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("alloc_gradients"));
+
+        auto arr_size_nat                 = world.op_bitcast(world.type_nat(), size_a);
+        auto [arr_ty, arr_addr_space]     = as<Tag::Ptr>(arr_ref->type())->arg()->projs<2>();
+        auto arr_sized_ty                 = world.arr(arr_size_nat, arr_ty->as<Arr>()->body())->as<Arr>();
+        auto [gradient_mem, gradient_arr] = world.op_alloc(arr_sized_ty, alloc_gradients->mem_var())->projs<2>();
+        gradient_arr                      = world.op_bitcast(arr_ref->type(), gradient_arr);
+
+        const Lam* returnLam = flow.runAfter(alloc_gradients);
+        alloc_gradients->set_body(world.app(returnLam, gradient_mem));
+
+        auto [loop, loop_body] = repeatLam(world, size_a);
+
+        flow.runAfter(loop);
+
+        auto loop_mem      = loop_body->mem_var();
+        auto idx           = loop_body->var(1);
+        auto continue_loop = loop_body->ret_var();
+
+        auto ref_p = world.op_lea(arr_ref, idx, world.dbg("ref_p"));
+
+        auto masked_f =
+            world.nom_filter_lam(world.cn({world.type_mem(), ref_p->type(), fun_result_pi}), world.dbg("masked_f"));
+        masked_f->set_body(world.app(f, {masked_f->mem_var(), ref, masked_f->ret_var()}));
+
+        Flow loopFlow{world, loop_body};
+        auto result            = derive_numeric_walk(world, ref_p, h, masked_f, fx, s, loopFlow);
+        auto continue_loop_lam = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("continue_loop_lam"));
+
+        auto lea_gradient       = world.op_lea(gradient_arr, idx);
+        auto store_gradient_mem = world.op_store(continue_loop_lam->mem_var(), lea_gradient, result);
+
+        continue_loop_lam->set_body(world.app(continue_loop, store_gradient_mem));
+
+        loopFlow.finish(continue_loop_lam);
+
+        return world.tuple({size_a, gradient_arr});
+    }
+
+    auto dim = getDim(ref);
+
+    if (dim == 1) {
+        if (isa<Tag::Int>(ref->type())) {
+            return world.lit_real(64, 0.0);
+        } else {
+            auto f_call = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("f_call"));
+
+            auto quotient = world.nom_filter_lam(fun_result_pi, world.dbg("quotient"));
+            auto result   = world.nom_filter_lam(fun_result_pi, world.dbg("result"));
+
+            // call function with value offset
+            f_call->set_body(world.app(f, {f_call->mem_var(), world.op(ROp::add, (nat_t)0, ref, h), quotient}));
+
+            // differential quotient
+            auto gradient = world.op(
+                ROp::mul, (nat_t)0,
+                world.op(ROp::div, (nat_t)0,
+                         world.op(Conv::r2r, ref->type(), world.op(ROp::sub, (nat_t)0, quotient->var(1), fx)), h),
+                s);
+
+            quotient->set_body(world.app(result, {quotient->mem_var(), gradient}));
+            flow.runAfter(f_call, result);
+            return result->var(1);
+        }
+    }
+
+    DefArray tuple_result{dim};
+
+    for (size_t i = 0; i < dim; ++i) {
+        // adds component-wise both vectors
+        // use op?
+        auto current = world.extract(ref, i);
+
+        DefArray ops{dim + 2};
+        auto masked_f =
+            world.nom_filter_lam(world.cn({world.type_mem(), current->type(), fun_result_pi}), world.dbg("masked_f"));
+
+        for (size_t j = 0; j < dim; ++j) {
+            if (j != i) { ops[j + 1] = world.extract(ref, j); }
+        }
+
+        ops[0]       = masked_f->mem_var();
+        ops[i + 1]   = masked_f->var(1);
+        ops[dim + 1] = masked_f->ret_var();
+
+        masked_f->set_body(world.app(f, ops));
+
+        tuple_result[i] = derive_numeric_walk(world, current, h, masked_f, fx, s, flow);
+    }
+
+    return world.tuple(tuple_result);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 } // namespace thorin
