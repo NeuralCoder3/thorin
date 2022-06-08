@@ -7,7 +7,6 @@
 
 namespace thorin {
 
-
 /// @name macros - some useful macro definitions
 ///@{
 #define THORIN_UNREACHABLE        assert(false && "Unreachable")
@@ -43,8 +42,8 @@ const Pi* isReturning(const Pi* pi) {
 }
 
 // TODO: use tuple.cpp flatten
-//const Def* flatten(const Def* def);
-//size_t flatten(DefVec& ops, const Def* def, bool flatten_sigmas = true);
+// const Def* flatten(const Def* def);
+// size_t flatten(DefVec& ops, const Def* def, bool flatten_sigmas = true);
 DefArray flat_tuple(const DefArray& defs, bool preserveFatPtr = false) {
     // or use concat
     std::vector<const Def*> v;
@@ -86,34 +85,28 @@ const Lam* repeatLam(World& world, const Def* count, const Lam* body) {
     auto loop_entry =
         world.nom_filter_lam(world.cn({world.type_mem(), world.cn(world.type_mem())}), world.dbg("loop_entry"));
 
-    auto mem_t  = world.type_mem();
-    auto i32_t  = world.type_int_width(32);
-    auto i64_t  = world.type_int_width(64);
+    auto mem_t = world.type_mem();
+    auto i32_t = world.type_int_width(32);
+    auto i64_t = world.type_int_width(64);
 
-    auto accumulator_type = world.sigma({i32_t});// dummy to avoid empty sigma
+    auto accumulator_type = world.sigma({i32_t}); // dummy to avoid empty sigma
     auto yield_type       = world.cn({mem_t, accumulator_type});
     auto body_type        = world.cn({mem_t, i32_t, accumulator_type, yield_type});
 
     auto forbreak = world.nom_lam(world.cn({mem_t, accumulator_type}), world.dbg("break"));
     forbreak->app(false, loop_entry->ret_var(), {forbreak->mem_var(), world.extract(forbreak->var(1), 0_s)});
 
-    auto forbody = world.nom_lam(body_type, world.dbg("body"));
+    auto forbody       = world.nom_lam(body_type, world.dbg("body"));
     auto loop_continue = world.nom_filter_lam(world.cn(world.type_mem()), world.dbg("loop_continue"));
 
-    auto [mem, i, acctpl, yield] = forbody->vars<4>({world.dbg("mem"), world.dbg("i"), world.dbg("acctpl"), world.dbg("yield")});
+    auto [mem, i, acctpl, yield] =
+        forbody->vars<4>({world.dbg("mem"), world.dbg("i"), world.dbg("acctpl"), world.dbg("yield")});
     forbody->app(false, body, {mem, i, loop_continue});
     // use lam application (beta red/specialization) for shorter code
-    loop_continue->app(false, yield, {loop_continue->mem_var(),acctpl});
+    loop_continue->app(false, yield, {loop_continue->mem_var(), acctpl});
 
-    auto forloop = world.op_for(
-        loop_entry->mem_var(),
-        world.lit_int_width(32,0),
-        count,
-        world.lit_int_width(32,1),
-        {world.lit_int(0)},
-        forbody,
-        forbreak
-    );
+    auto forloop = world.op_for(loop_entry->mem_var(), world.lit_int_width(32, 0), count, world.lit_int_width(32, 1),
+                                {world.lit_int(0)}, forbody, forbreak);
 
     loop_entry->set_body(forloop);
 
@@ -152,7 +145,6 @@ const Def* copy(World& world, const Def* inputArr, const Def* outputArr, const D
 ///@}
 // end eviction
 
-
 /// @name utility - functions that are adjacent to autodiff but not necessarily interlinked
 ///@{
 bool isFatPtrType(World& world_, const Def* type) {
@@ -169,7 +161,6 @@ bool isFatPtrType(World& world_, const Def* type) {
     }
     return false;
 }
-
 
 // multidimensional addition of values
 // needed for operation differentiation
@@ -334,16 +325,16 @@ lit_of_type(World& world, const Def* mem, const Def* type, const Def* like, r64 
     else if (auto a = type->isa<Arr>()) {
         auto dim = a->shape()->as<Lit>()->get<uint8_t>();
         DefArray ops{dim, [&](auto) {
-          auto [nmem, op] = lit_of_type(world, mem, a->body(), like, lit, dummy);
-          mem             = nmem;
-          return op;
-        }};
+                         auto [nmem, op] = lit_of_type(world, mem, a->body(), like, lit, dummy);
+                         mem             = nmem;
+                         return op;
+                     }};
         litdef = world.tuple(ops);
     } else if (auto sig = type->isa<Sigma>()) {
         auto zops = sig->ops().map([&](auto op, auto index) {
-          auto [nmem, zop] = lit_of_type(world, mem, op, like->proj(index), lit, dummy);
-          mem              = nmem;
-          return zop;
+            auto [nmem, zop] = lit_of_type(world, mem, op, like->proj(index), lit, dummy);
+            mem              = nmem;
+            return zop;
         });
 
         litdef = world.tuple(zops);
@@ -459,7 +450,6 @@ const Lam* lam_fat_ptr_wrap(World& world, const Lam* lam) {
 }
 ///@}
 // end utility
-
 
 /// @name autodiffer utility - the autodiff translation of one unit
 ///@{
@@ -725,7 +715,6 @@ const Def* AutoDiffer::reverse_diff(Lam* src) {
     return dst;
 }
 
-
 void AutoDiffer::derive_numeric(const Lam* fun,
                                 Lam* source,
                                 const Def* target,
@@ -798,11 +787,11 @@ void AutoDiffer::derive_external(const Lam* fun, Lam* pb, Lam* fw, Lam* res_lam)
         auto scal_mul_wrap = world_.nom_filter_lam(return_type, world_.dbg("scal_mul"));
 
         scal_mul_wrap->set_body(world_.app(pb->ret_var(), scal_mul_wrap->vars().map([&](auto var, size_t i) {
-          if (i == 0) {
-              return var;
-          } else {
-              return world_.op(ROp::mul, (nat_t)0, world_.op_bitcast(var->type(), scal), var);
-          }
+            if (i == 0) {
+                return var;
+            } else {
+                return world_.op(ROp::mul, (nat_t)0, world_.op_bitcast(var->type(), scal), var);
+            }
         })));
 
         type_dump(world_, "found user diffed function", user_defined_diff);
@@ -862,7 +851,6 @@ void AutoDiffer::derive_external(const Lam* fun, Lam* pb, Lam* fw, Lam* res_lam)
     }
 }
 
-
 // seen is a simple lookup in the src_to_dst mapping
 const Def* AutoDiffer::seen(const Def* src) { return src_to_dst_.contains(src) ? src_to_dst_[src] : nullptr; }
 
@@ -913,7 +901,6 @@ const Def* AutoDiffer::j_wrap(const Def* def) {
     src_to_dst_[def] = dst;
     return dst;
 }
-
 
 const Def* AutoDiffer::j_wrap_convert(const Def* def) {
     if (auto var = def->isa<Var>()) {
@@ -1366,12 +1353,12 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
             if (d_arg->type()->isa<Sigma>() && !d_arg->isa<Var>()) {
                 auto count = getDim(d_arg);
                 ad_args    = world_.tuple(DefArray(count + 1, [&](auto i) {
-                  if (i < count) {
-                      return world_.extract(d_arg, (u64)i, world_.dbg("ad_arg"));
-                  } else {
-                      return pullbacks_[d_arg];
-                  }
-                }));
+                    if (i < count) {
+                        return world_.extract(d_arg, (u64)i, world_.dbg("ad_arg"));
+                    } else {
+                        return pullbacks_[d_arg];
+                    }
+                   }));
             } else {
                 // var (lambda completely with all arguments) and other (non tuple)
                 ad_args = d_arg;
@@ -1538,7 +1525,6 @@ const Def* AutoDiffer::j_wrap_rop(ROp op, const Def* a, const Def* b) {
 ///@}
 // end autodiffer
 
-
 /// @name autodiff - management of invocation of autodiffer for the autodiff pass
 ///@{
 // rewrites applications of the form 'rev_diff function' into the differentiation of f
@@ -1597,45 +1583,6 @@ const Def* AutoDiff::rewrite(const Def* def) {
 }
 ///@}
 // end autodiff
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // TODO: document and explain usage
 class Flow {
@@ -1697,7 +1644,8 @@ public:
 };
 
 // TODO: document and explain usage
-const Def* derive_numeric_walk(World& world, const Def* ref, const Def* h, const Lam* f, const Def* fx, const Def* s, Flow& flow) {
+const Def*
+derive_numeric_walk(World& world, const Def* ref, const Def* h, const Lam* f, const Def* fx, const Def* s, Flow& flow) {
     // TODO: use vec_add + OH to avoid code duplication
     // it will be slower for arrays but in general arrays have to be copied
     auto fun_result_pi = f->doms().back()->as<Pi>();
@@ -1824,21 +1772,5 @@ const Def* derive_numeric_walk(World& world, const Def* ref, const Def* h, const
 
     return world.tuple(tuple_result);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 } // namespace thorin

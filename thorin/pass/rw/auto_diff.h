@@ -88,7 +88,6 @@ public:
     const Def* rewrite(const Def*) override;
 };
 
-
 /// auxiliary data structure to manage the translation of one unit (one function)
 class AutoDiffer {
 public:
