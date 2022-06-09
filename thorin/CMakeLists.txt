@@ -68,6 +68,8 @@ add_library(libthorin
     pass/fp/ssa_constr.h
     pass/rw/auto_diff.cpp
     pass/rw/auto_diff.h
+    pass/rw/auto_diff_util.cpp
+    pass/rw/auto_diff_util.h
     pass/fp/tail_rec_elim.cpp
     pass/fp/tail_rec_elim.h
     pass/rw/alloc2malloc.cpp
