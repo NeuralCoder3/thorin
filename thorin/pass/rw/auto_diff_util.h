@@ -10,13 +10,12 @@ namespace thorin {
 size_t getDim(const Def* def);
 const Pi* isReturning(const Pi* pi);
 DefArray flat_tuple(const DefArray& defs, bool preserveFatPtr = false);
-DefArray vars_without_mem_cont(Lam* lam);
+DefArray vars_without_mem_cont(const Lam* lam);
 const Lam* repeatLam(World& world, const Def* count, const Lam* body);
 std::pair<const Lam*, Lam*> repeatLam(World& world, const Def* count);
 const Def* copy(World& world, const Def* inputArr, const Def* outputArr, const Def* size);
 ///@}
 // end eviction
-
 
 /// @name utility - functions that are adjacent to autodiff but not necessarily interlinked
 ///@{

@@ -1,10 +1,10 @@
 #include "thorin/pass/rw/auto_diff.h"
-#include "thorin/pass/rw/auto_diff_util.h"
 
 #include <algorithm>
 #include <string>
 
 #include "thorin/analyses/scope.h"
+#include "thorin/pass/rw/auto_diff_util.h"
 
 namespace thorin {
 
@@ -16,10 +16,8 @@ namespace thorin {
 ///@}
 // end macros
 
-
 /// @name autodiffer utility - the autodiff translation of one unit
 ///@{
-
 const Def* AutoDiffer::zero_pb(const Def* type, const Def* dbg) {
     auto zeropi = createPbType(A, type);
     auto zeropb = world_.nom_filter_lam(zeropi, world_.dbg(dbg));
@@ -244,42 +242,6 @@ AutoDiffer::reloadPtrPb(const Def* mem, const Def* ptr, const Def* dbg, bool gen
 
 /// @name autodiffer - main functions of autodiffer
 ///@{
-
-// top level entry point after creating the AutoDiffer object
-// a mapping of source arguments to dst arguments is expected in src_to_dst
-const Def* AutoDiffer::reverse_diff(Lam* src) {
-    // For each param, create an appropriate pullback. It is just the (one-hot) identity function for each of those.
-    auto dst_lam = src_to_dst_[src]->as_nom<Lam>();
-    current_mem  = dst_lam->mem_var();
-
-    auto src_var   = src->var();
-    auto dst_var   = src_to_dst_[src_var];
-    auto var_sigma = src_var->type()->as<Sigma>();
-
-    DefArray trimmed_var_ty         = var_sigma->ops().skip(1, 1);
-    auto trimmed_var_sigma          = world_.sigma(trimmed_var_ty);
-    auto idpi                       = createPbType(A, trimmed_var_sigma);
-    auto idpb                       = world_.nom_filter_lam(idpi, world_.dbg("param_id"));
-    auto vars                       = dst_lam->vars();
-    auto real_params                = vars.skip(1, 1);
-    auto [current_mem_, zero_grad_] = ZERO(world_, current_mem, A, world_.tuple(real_params));
-    current_mem                     = current_mem_;
-    zero_grad                       = zero_grad_;
-    // ret only resp. non-mem, non-cont
-    auto idpb_vars = idpb->vars();
-    auto args      = idpb_vars.skip_back();
-    idpb->set_body(world_.app(idpb->ret_var(), args));
-    pullbacks_[dst_var] = idpb;
-    auto src_vars       = src->vars();
-    for (auto dvar : src_vars.skip(1, 1)) {
-        // solve the problem of inital array pb in extract pb
-        pullbacks_[dvar] = extract_pb(dvar, dst_lam->var());
-        initArg(dvar);
-    }
-    // translate the body => get correct applications of variables using pullbacks
-    auto dst = j_wrap(src->body());
-    return dst;
-}
 
 void AutoDiffer::derive_numeric(const Lam* fun,
                                 Lam* source,
@@ -1093,6 +1055,73 @@ const Def* AutoDiffer::j_wrap_rop(ROp op, const Def* a, const Def* b) {
 
 /// @name autodiff - management of invocation of autodiffer for the autodiff pass
 ///@{
+
+AutoDiffer::AutoDiffer(World& world, const Def* A_)
+    : world_{world}
+    , A_src{A_}
+    , A{world.tangent_type(A_, false)} {}
+
+void AutoDiffer::setParamPB(const Lam* src, const Lam* dst) {
+    // need to work on src as (A^L)^R might not be A^R
+    DefArray args = vars_without_mem_cont(src);
+    // TODO: do we need flat_tuple? (probably not because we want to preserve the shape)
+    auto arg_type = world_.tuple(args);
+
+    auto idpi = createPbType(A, arg_type);
+    auto idpb = world_.nom_filter_lam(idpi, world_.dbg("param_id"));
+
+    idpb->set_body(world_.app(idpb->ret_var(), idpb->vars()->skip_back()));
+
+    // dst->var() = src_to_dst_[src->var()]
+    pullbacks_[dst->var()] = idpb;
+}
+
+void AutoDiffer::setup(const Lam* src, const Lam* dst) {
+    current_mem = dst->mem_var();
+
+    auto [current_mem_, zero_grad_] = ZERO(world_, current_mem, A, world_.tuple(vars_without_mem_cont(dst)));
+    current_mem                     = current_mem_;
+    zero_grad                       = zero_grad_;
+}
+
+Lam* translate_lam(Lam* src) {
+    auto src_pi = src->type();
+    // function to differentiate
+    // this should be something like `cn[:mem, r32, cn[:mem, r32]]`
+    auto& world = src->world();
+
+    // We get for `A -> B` the type `A -> (B * (B -> A))`.
+    //  i.e. cn[:mem, A, [:mem, B]] ---> cn[:mem, A, cn[:mem, B, cn[:mem, B, cn[:mem, A]]]]
+    //  take input, return result and return a function (pullback) taking z and returning the derivative
+    const Pi* dst_pi = world.rev_diff_type(src_pi->as<Pi>()); // multi dim as array
+    auto dst_lam     = world.nom_filter_lam(dst_pi, src->filter(),
+                                            world.dbg("top_level_rev_diff_" + src->name())); // copy the unfold filter
+    // use src to not dilute tangent transformation with left type transformation (only matters for arrays)
+    auto A = world.params_without_return_continuation(src_pi); // input variable(s) => possible a pi type (array)
+
+    // The actual AD, i.e. construct "sq_cpy"
+    // src_to_dst maps old definitions to new ones
+    // here we map the arguments of the lambda
+
+    auto differ = AutoDiffer{world, A};
+    differ.addSrc2DstMapping(src, dst_lam);
+    differ.addSrc2DstMapping(src->var(), dst_lam->var());
+
+    differ.setup(src, dst_lam);
+    differ.setParamPB(src, dst_lam);
+
+    // TODO: init array, ptr, ...
+    //    for (auto dvar : src_vars.skip(1, 1)) {
+    //        // solve the problem of inital array pb in extract pb
+    //        pullbacks_[dvar] = extract_pb(dvar, dst_lam->var());
+    //        initArg(dvar);
+    //    }
+
+    dst_lam->set_body(differ.j_wrap(src->body()));
+
+    return dst_lam;
+}
+
 // rewrites applications of the form 'rev_diff function' into the differentiation of f
 const Def* AutoDiff::rewrite(const Def* def) {
     // isa<Tag::RevDiff> is not applicable here
@@ -1104,51 +1133,20 @@ const Def* AutoDiff::rewrite(const Def* def) {
                 //           --------- app ----------
                 //           ------ type_app ------ arg
                 //           (axiom    arg2       ) arg
-                auto isClosure = app->num_args() > 1;
 
-                auto fun_arg = isClosure ? app->arg(1) : app->arg(0);
+                auto fun_arg = app->arg(0);
                 auto src_lam = fun_arg->as_nom<Lam>();
-                auto src_pi  = src_lam->type();
-                // function to differentiate
-                // this should be something like `cn[:mem, r32, cn[:mem, r32]]`
-                auto& world = src_lam->world();
-
-                // We get for `A -> B` the type `A -> (B * (B -> A))`.
-                //  i.e. cn[:mem, A, [:mem, B]] ---> cn[:mem, A, cn[:mem, B, cn[:mem, B, cn[:mem, A]]]]
-                //  take input, return result and return a function (pullback) taking z and returning the derivative
-                const Pi* dst_pi;
-                if (isClosure)
-                    dst_pi = app->type()->op(1)->as<Pi>();
-                else
-                    dst_pi = app->type()->as<Pi>(); // multi dim as array
-                auto dst_lam =
-                    world.nom_filter_lam(dst_pi, src_lam->filter(),
-                                         world.dbg("top_level_rev_diff_" + src_lam->name())); // copy the unfold filter
-                // use src to not dilute tangent transformation with left type transformation (only matters for arrays)
-                auto A =
-                    world.params_without_return_continuation(src_pi); // input variable(s) => possible a pi type (array)
-
-                // is cn[mem, B0, ..., Bm, pb] => skip mem and pb
-                auto B = world.params_without_return_continuation(dst_pi->dom()->ops().back()->as<Pi>());
-                // The actual AD, i.e. construct "sq_cpy"
-                Def2Def src_to_dst;
-                // src_to_dst maps old definitions to new ones
-                // here we map the arguments of the lambda
-
-                src_to_dst[src_lam]        = dst_lam;
-                src_to_dst[src_lam->var()] = dst_lam->var();
-                auto differ                = AutoDiffer{world, src_to_dst, A};
-                dst_lam->set_body(differ.reverse_diff(src_lam));
-
-                auto dst = isClosure ? world.insert(app->arg(), 1, dst_lam) : dst_lam;
-                return dst;
+                return translate_lam(src_lam);
             }
         }
     }
     return def;
 }
+
 ///@}
 // end autodiff
+
+// used for numeric
 
 // TODO: document and explain usage
 class Flow {

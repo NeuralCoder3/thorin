@@ -959,41 +959,45 @@ const Def* World::params_without_return_continuation(const Pi* pi) {
     return sigma(pi->dom()->ops().skip_front().skip_back());
 }
 
+const Pi* World::rev_diff_type(const Pi* pi) {
+    assert(pi->is_cn());
+
+    auto dom         = params_without_return_continuation(pi);
+    auto ret_cont    = pi->dom()->ops().back();
+    auto codom       = sigma(ret_cont->as<Pi>()->dom()->ops().skip_front());
+    auto deriv_dom   = tangent_type(dom, true);
+    auto deriv_codom = tangent_type(codom, true);
+
+    auto tan_dom   = tangent_type(dom, false);
+    auto tan_codom = tangent_type(codom, false);
+
+    auto pb_ty = cn_mem_ret_flat(tan_codom, tan_dom);
+    const Def* deriv_pb_codom;
+
+    // merge but the other way around
+    if (deriv_codom->isa<Sigma>()) {
+        auto size = deriv_codom->num_ops() + 1;
+        DefArray defs(size);
+        for (size_t i = 0; i < size; ++i) {
+            if (i == size - 1) {
+                defs[i] = pb_ty;
+            } else {
+                defs[i] = deriv_codom->op(i);
+            }
+        }
+        deriv_pb_codom = sigma(defs);
+    } else {
+        deriv_pb_codom = sigma({deriv_codom, pb_ty});
+    }
+    auto diff_ty = cn_mem_ret_flat(deriv_dom, deriv_pb_codom);
+    return diff_ty;
+}
+
 const Def* World::op_rev_diff(const Def* fn, const Def* dbg) {
     if (auto pi = fn->type()->isa<Pi>()) {
-        assert(pi->is_cn());
+        auto diff_ty = rev_diff_type(pi);
 
-        auto dom         = params_without_return_continuation(pi);
-        auto ret_cont    = pi->dom()->ops().back();
-        auto codom       = sigma(ret_cont->as<Pi>()->dom()->ops().skip_front());
-        auto deriv_dom   = tangent_type(dom, true);
-        auto deriv_codom = tangent_type(codom, true);
-
-        auto tan_dom   = tangent_type(dom, false);
-        auto tan_codom = tangent_type(codom, false);
-
-        auto fn_ty = cn_mem_ret_flat(dom, codom);
-        auto pb_ty = cn_mem_ret_flat(tan_codom, tan_dom);
-        const Def* deriv_pb_codom;
-
-        // merge but the other way around
-        if (deriv_codom->isa<Sigma>()) {
-            auto size = deriv_codom->num_ops() + 1;
-            DefArray defs(size);
-            for (size_t i = 0; i < size; ++i) {
-                if (i == size - 1) {
-                    defs[i] = pb_ty;
-                } else {
-                    defs[i] = deriv_codom->op(i);
-                }
-            }
-            deriv_pb_codom = sigma(defs);
-        } else {
-            deriv_pb_codom = sigma({deriv_codom, pb_ty});
-        }
-        auto diff_ty = cn_mem_ret_flat(deriv_dom, deriv_pb_codom);
-
-        auto mk_pullback = app(data_.op_rev_diff_, tuple({fn_ty, diff_ty}), this->dbg("mk_pullback"));
+        auto mk_pullback = app(data_.op_rev_diff_, tuple({pi, diff_ty}), this->dbg("mk_pullback"));
         auto pullback    = app(mk_pullback, fn, dbg);
 
         return pullback;

@@ -91,39 +91,38 @@ public:
 /// auxiliary data structure to manage the translation of one unit (one function)
 class AutoDiffer {
 public:
-    AutoDiffer(World& world, const Def2Def& src_to_dst, const Def* A_)
-        : world_{world}
-        , src_to_dst_{src_to_dst}
-        , A_src{A_}
-        , A{world.tangent_type(A_, false)} {
-        // TODO: is this comment up to date?
-        // initializes the differentiation for a function of type A -> B
-        // src_to_dst expects the parameters of the source lambda to be mapped
-        //  (this property is only used later on)
+    // TODO: is this comment up to date?
+    // initializes the differentiation for a function of type A -> B
+    // src_to_dst expects the parameters of the source lambda to be mapped
+    //  (this property is only used later on)
 
-        // the general principle is that every expression is a function
-        //   and has a gradient in respect from its outputs to its inputs
-        //   for instance add:R²->R has a pullback R->R²
-        //   describing how the result depends on the two inputs
-        //      (the derivation of the output w.r. to the inputs)
-        //   we mostly directly combine building techniques and chain rule applications
-        //   into the basic construction to derive the wanted derivative
-        //   w.r. to the function inputs of type A for the rev_diff call we currently are working on
-        //   in that sense every expression can be seen as a function from function input to some
-        //   intermediate result
-        //   Therefore, we need to keep track of A (but B is mostly not important)
+    // the general principle is that every expression is a function
+    //   and has a gradient in respect from its outputs to its inputs
+    //   for instance add:R²->R has a pullback R->R²
+    //   describing how the result depends on the two inputs
+    //      (the derivation of the output w.r. to the inputs)
+    //   we mostly directly combine building techniques and chain rule applications
+    //   into the basic construction to derive the wanted derivative
+    //   w.r. to the function inputs of type A for the rev_diff call we currently are working on
+    //   in that sense every expression can be seen as a function from function input to some
+    //   intermediate result
+    //   Therefore, we need to keep track of A (but B is mostly not important)
 
-        // combination of derivatives is in most parts simply multiplication and application
-        // the pullbacks handle this for us as the scalar is applied inside the derivative
-        // and scales the derivative
-        // Therefore, composition of two pullbacks corresponds to (matrix-)multiplication
-        // and represents an application of the chain rule
-        // the nested nature emulates the backward adjoint trace used in backpropagation
-        // also see "Demystifying Differentiable Programming: Shift/Reset the Penultimate Backpropagator"
-        // for a similar approach but with shift and reset primitives
-    }
+    // combination of derivatives is in most parts simply multiplication and application
+    // the pullbacks handle this for us as the scalar is applied inside the derivative
+    // and scales the derivative
+    // Therefore, composition of two pullbacks corresponds to (matrix-)multiplication
+    // and represents an application of the chain rule
+    // the nested nature emulates the backward adjoint trace used in backpropagation
+    // also see "Demystifying Differentiable Programming: Shift/Reset the Penultimate Backpropagator"
+    // for a similar approach but with shift and reset primitives
+    AutoDiffer(World& world, const Def* A_);
 
-    const Def* reverse_diff(Lam* src); // top level function to compute the reverse differentiation of a function
+    void addSrc2DstMapping(const Def* src, const Def* dst) { src_to_dst_[src] = dst; }
+
+    void setParamPB(const Lam* src, const Lam* dst);
+    void setup(const Lam* src, const Lam* dst);
+
 private:
     const Def* j_wrap(const Def* def); // 'identity' (except for lambdas, functions, and applications) traversal
     // annotating the pullbacks

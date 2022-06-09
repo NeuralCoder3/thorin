@@ -1,6 +1,8 @@
 #include "thorin/pass/rw/auto_diff_util.h"
+
 #include <algorithm>
 #include <string>
+
 #include "thorin/analyses/scope.h"
 
 namespace thorin {
@@ -12,7 +14,6 @@ namespace thorin {
 #define type_dump(world, name, d) world.DLOG("{} {} : {}", name, d, d->type())
 ///@}
 // end macros
-
 
 /// @name eviction - functions that are general enough to be replaced or moved out to other places
 ///@{
@@ -59,7 +60,7 @@ DefArray flat_tuple(const DefArray& defs, bool preserveFatPtr = false) {
 
 // TODO: replace with more general handling
 //      or move to mem dialect
-DefArray vars_without_mem_cont(Lam* lam) {
+DefArray vars_without_mem_cont(const Lam* lam) {
     // ? 1 : 0 is superfluous (see 7.8.4 in C++ 20 standard) but increases readability
     return lam->vars().skip(isa<Tag::Mem>(lam->var(0)->type()) ? 1 : 0, isReturning(lam->type()) != nullptr ? 1 : 0);
 }
@@ -324,16 +325,16 @@ lit_of_type(World& world, const Def* mem, const Def* type, const Def* like, r64 
     else if (auto a = type->isa<Arr>()) {
         auto dim = a->shape()->as<Lit>()->get<uint8_t>();
         DefArray ops{dim, [&](auto) {
-          auto [nmem, op] = lit_of_type(world, mem, a->body(), like, lit, dummy);
-          mem             = nmem;
-          return op;
-        }};
+                         auto [nmem, op] = lit_of_type(world, mem, a->body(), like, lit, dummy);
+                         mem             = nmem;
+                         return op;
+                     }};
         litdef = world.tuple(ops);
     } else if (auto sig = type->isa<Sigma>()) {
         auto zops = sig->ops().map([&](auto op, auto index) {
-          auto [nmem, zop] = lit_of_type(world, mem, op, like->proj(index), lit, dummy);
-          mem              = nmem;
-          return zop;
+            auto [nmem, zop] = lit_of_type(world, mem, op, like->proj(index), lit, dummy);
+            mem              = nmem;
+            return zop;
         });
 
         litdef = world.tuple(zops);
@@ -342,7 +343,6 @@ lit_of_type(World& world, const Def* mem, const Def* type, const Def* like, r64 
 
     return {mem, litdef};
 }
-
 
 // TODO: revisit
 std::pair<const Def*, const Def*>
@@ -430,6 +430,5 @@ const Lam* lam_fat_ptr_wrap(World& world, const Lam* lam) {
 }
 ///@}
 // end utility
-
 
 } // namespace thorin
