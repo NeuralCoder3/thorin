@@ -372,13 +372,13 @@ public:
     const Axiom* type_int() { return data_.type_int_; }
     const Axiom* type_real() { return data_.type_real_; }
     const Axiom* type_ptr() { return data_.type_ptr_; }
-    const Axiom* type_mat() { return data_.type_mat_; }
+    const Axiom* type_tn() { return data_.type_mat_; }
     const App* type_bool() { return data_.type_bool_; }
     const Def* type_tn(nat_t dim_count, const Def* elem_type) {
         return type_tn(lit_nat(dim_count), elem_type);
     }
     const Def* type_tn(const Def* dim_count, const Def* elem_type) {
-        return app(type_mat(), {dim_count, elem_type});
+        return app(type_tn(), {dim_count, elem_type});
     }
     const App* type_int_width(nat_t width) { return type_int(lit_nat(width2mod(width))); }
     const App* type_int(nat_t mod) { return type_int(lit_nat(mod)); }
@@ -493,7 +493,7 @@ public:
         if (auto mat_type = isa<Tag::Tn>(mat)) {
             auto elem_type = elem_ty_of_tn(mat_type);
             return sigma({
-                 type_int_width(32),
+                 type_int_width(64),
                  type_ptr(arr(top_nat(), elem_type)),
                  type_int_width(64),
                  type_int_width(64),
@@ -662,9 +662,16 @@ public:
             return *this;
         }
 
+        Builder& flatten_if_non_null(const Def* def){
+            if(def != nullptr){
+                return flatten(def);
+            }
+            return *this;
+        }
+
         Builder& flatten(const Def* def ){
             auto isVar = def->isa<Var>();
-            if(isVar || def->isa<Sigma>() || def->isa<Tuple>()){
+            if(isVar || def->num_projs() > 1){
                 nat_t i = isVar && !v.empty() ? 1 : 0; //start from 1 if mem already is present
                 nat_t size = def->num_projs();
                 for(; i < size ; i++ ){
@@ -745,7 +752,7 @@ public:
             return *this;
         }
 
-        Builder& set_filter(bool filter = true){
+        Builder& filter(bool filter = true){
             this->filter_ = filter;
             return *this;
         }

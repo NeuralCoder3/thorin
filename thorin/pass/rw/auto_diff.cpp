@@ -608,6 +608,9 @@ private:
     const Def* zero_pb(const Def* type, const Def* dbg);
     const Def* j_wrap_tuple(DefArray tuple);
 
+    Lam* oneHotTnPb(const Def* other_pb, const Def* value, DefArray& dims, const Def* hotIndex);
+
+
     const Def* seen(const Def* src); // lookup in the map
 
     // chains cn[:mem, A, cn[:mem, B]] and cn[:mem, B, cn[:mem, C]] to a toplevel cn[:mem, A, cn[:mem, C]]
@@ -802,8 +805,6 @@ const Def* AutoDiffer::extract_pb(const Def* j_extract, const Def* tuple) {
     if(auto lit = idx->isa<Lit>()) {
         // would save from tuples
         // but can not occur as partial evaluation removes such projections
-
-        auto tuple_type = tuple->type();
 
         auto pb_domain=tuple_pb->type()->as<Pi>()->dom();//as<Sigma>();
         int index_lit = lit->get<uint8_t>();
@@ -1122,6 +1123,41 @@ const Lam* lam_fat_ptr_wrap(World& world, const Lam* lam){
     return lam;
 }
 
+Lam* AutoDiffer::oneHotTnPb(const Def* other_pb, const Def* value, DefArray& dims, const Def* hotIndex){
+
+    auto tn_type = world_.type_tn(2, value->type());
+
+    auto pi = createPbType(A, tn_type);
+    auto pb = world_.nom_filter_lam2(pi, world_.dbg("pb_lea"));
+
+    auto [mat_alloc_mem, gradient_matrix] = world_.op_create_matrix(value->type(), dims, pb->mem_var(), true)->projs<2>();
+
+    auto ptr = world_.extract(gradient_matrix, (u64)1);
+
+    auto gradient_lea = world_.op_lea(ptr, hotIndex);
+    auto store_mem = world_.op_store(mat_alloc_mem, gradient_lea, value);
+
+    pb->set_body( world_.app(
+            other_pb,
+            {
+                store_mem,
+                gradient_matrix,
+                pb->ret_var()
+            }
+    ));
+
+    return pb;
+}
+
+const Def* oneHotTn(World& w, const Def*& mem, const Def* value, DefArray& dims, const Def* hotIndex){
+    auto [mat_alloc_mem, gradient_matrix] = w.op_create_matrix(value->type(), dims, mem, true)->projs<2>();
+    auto ptr = w.extract(gradient_matrix, (u64)1);
+
+    auto one_hot_lea = w.op_lea(ptr, hotIndex);
+    auto store_mem = w.op_store(mat_alloc_mem, one_hot_lea, value);
+
+    return w.tuple({store_mem, gradient_matrix});
+}
 
 const Def* AutoDiffer::j_wrap_convert(const Def* def) {
 
@@ -1903,7 +1939,7 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
     Lam *pb;
     const Def *dst = nullptr;
 
-    if(op == MOp::transpose || op == MOp::sum || op == MOp::init
+    if(op == MOp::transpose || op == MOp::sum || op == MOp::init || op == MOp::max
     ){
         auto a = world_.extract(args, 1);
 
@@ -1920,9 +1956,9 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
             auto pbTa = apb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
             pb = world_.nom_filter_lam(pbpi, world_.lit_false(), world_.dbg("phi_"));
 
-        auto [dst_mem, res] = world_.unary_op(op, RMode::none, current_mem, a)->projs<2>();
-        current_mem = dst_mem;
-        dst=res;
+            auto [dst_mem, res] = world_.unary_op(op, RMode::none, current_mem, a)->projs<2>();
+            current_mem = dst_mem;
+            dst = res;
 
             auto [stencil_mem, stencil_mat] = world_.unary_op(MOp::transpose, RMode::none, pb->mem_var(), pb->var(1) )->projs<2>();
             pb->set_body(world_.app(apb, {stencil_mem, stencil_mat, pb->ret_var()}));
@@ -1945,6 +1981,36 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
 
             //auto [mat_mem, pb_mat] = world_.op_create_matrix(world_.type_real(64), {rows, cols}, pb->mem_var(), pb->var(1) )->projs<2>();
             pb->set_body(world_.app(apb, {mat_mem, pb_mat, pb->ret_var()}));
+        }else if(op == MOp::max){
+            auto [dst_mem, dst_max_val, dst_max_idx] = world_.unary_op(MOp::max, RMode::none, current_mem, a)->projs<3>();
+
+            auto result = world_.tuple({dst_max_val, dst_max_idx});
+            auto pbpi = createPbType(A, result->type());
+
+            assert(pullbacks_.count(a) && "Pullbacks for MOp arguments should already be created");
+            // pullbacks of the arguments
+            auto apb = pullbacks_[a];
+            auto pbTa = apb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
+            pb = world_.nom_filter_lam(pbpi, world_.lit_false(),  world_.dbg("phi_"));
+
+            current_mem = dst_mem;
+            dst = result;
+
+            auto rows = world_.extract(a, (u64)2);
+            auto cols = world_.extract(a, (u64)3);
+
+            Array<const Def*> dims = {rows, cols};
+
+            auto [mat_alloc_mem, gradient_matrix] = world_.op_create_matrix(world_.type_real(64), dims, pb->mem_var(), true)->projs<2>();
+
+            auto ptr = world_.extract(gradient_matrix, (u64)1);
+
+            auto gradient_lea = world_.op_lea(ptr, dst_max_idx);
+            auto store_mem = world_.op_store(mat_alloc_mem, gradient_lea, pb->var(1));
+
+
+            //auto [mat_mem, pb_mat] = world_.op_create_matrix(world_.type_real(64), {rows, cols}, pb->mem_var(), pb->var(1) )->projs<2>();
+            pb->set_body(world_.app(apb, {store_mem, gradient_matrix, pb->ret_var()}));
         }else if(op == MOp::init){
             auto a = world_.extract(args, 1);
             auto b = world_.extract(args, 2);
@@ -2071,7 +2137,7 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
         end->set_body(world_.app(sum_pb, end->mem_var()));
     }
 
-    auto result = world_.tuple({current_mem, dst});
+    auto result = world_.builder().add(current_mem).flatten(dst).tuple();
     pullbacks_[result] = pb;
     return result;
 }

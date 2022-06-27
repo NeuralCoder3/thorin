@@ -123,7 +123,7 @@ public:
 
     const Def* bitCheck(u32 bit){
         auto meta = getMeta();
-        auto mask = world.lit_int_width(32, 1 << bit);
+        auto mask = world.lit_int_width(64, 1 << bit);
         auto masked = world.op(Bit::_and, meta, mask);
         return world.op(ICmp::e, masked, mask);
     }

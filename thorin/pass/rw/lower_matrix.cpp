@@ -24,7 +24,8 @@ bool is_scalar(MOp mop){
 bool is_unary(MOp mop){
     switch (mop) {
         case MOp::transpose:
-        case MOp::sum:{
+        case MOp::sum:
+        case MOp::max:{
             return true;
         }
         default:{
@@ -94,45 +95,45 @@ void LowerMatrix::construct_mop(MOp mop, const Def* elem_type, ConstructHelper& 
 
     switch (mop) {
         case MOp::vec: {
+            auto i = helper.indices[0];
 
-            auto [left_col_loop, left_col_yield] = w.repeat(input.left.getCols(), {elem_type});
+            LoopBuilder zeroLoopBuil(world());
+            zeroLoopBuil.addLoop(input.right.getCols());
+            NestedLoops zeroLoop = zeroLoopBuil.build();
 
-            auto left_col_loop_result = buil
-                    .mem()
-                    .add(elem_type)
-                    .nom_filter_lam("left_row_loop_result");
+            buil.mem(body).app_body(body, zeroLoop.entry);
 
-            buil
-                    .mem(body)
-                    .add(zero(w, elem_type))
-                    .add(left_col_loop_result)
-                    .app_body(body, left_col_loop);
+            auto zero_j = zeroLoop.indices[0];
+            auto zero_lea = helper.result.getLea( i, zero_j );
 
-            buil.mem(left_col_loop_result).app_body(left_col_loop_result, body->ret_var());
+            auto zero_mem = w.op_store(zeroLoop.body->mem_var(), zero_lea, zero(w, elem_type));
+            buil.add(zero_mem).app_body(zeroLoop.body, zeroLoop.body->ret_var());
 
-            auto index = left_col_yield->var(1);
-            auto carry = left_col_yield->var(2);
+            LoopBuilder mulLoopBuil(world());
+            mulLoopBuil.addLoop(input.left.getCols());
+            mulLoopBuil.addLoop(input.right.getCols());
+            NestedLoops mulLoop = mulLoopBuil.build();
 
-            auto left_row_index = helper.indices[0];
-            auto right_col_index = helper.indices[1];
+            buil.mem(zeroLoop.finish).app_body(zeroLoop.finish, mulLoop.entry);
 
-            auto left_ptr = input.left.getLea(left_row_index, index);
-            auto right_ptr = input.right.getLea(index, right_col_index);
+            auto k = mulLoop.indices[0];
+            auto j = mulLoop.indices[1];
 
-            auto [left_load_mem, left_value] = w.op_load(left_col_yield->mem_var(), left_ptr)->projs<2>();
+            auto left_ptr = input.left.getLea(i, k);
+            auto right_ptr = input.right.getLea(k, j);
+            auto result_lea = helper.result.getLea( i, j );
+
+            auto [result_load_mem, carry] = w.op_load(mulLoop.body->mem_var(), result_lea)->projs<2>();
+
+            auto [left_load_mem, left_value] = w.op_load(result_load_mem, left_ptr)->projs<2>();
             auto [right_load_mem, right_value] = w.op_load(left_load_mem, right_ptr)->projs<2>();
 
             auto sum = mul_add(w, elem_type, left_value, right_value, carry);
 
-            buil
-                    .add(right_load_mem)
-                    .add(sum)
-                    .app_body(left_col_yield, left_col_yield->ret_var());
+            auto store_mem = w.op_store(right_load_mem, result_lea, sum);
 
-            auto left_lea = helper.result.getLea( left_row_index, right_col_index);
-
-            auto store_mem = w.op_store(left_col_loop_result->mem_var(), left_lea, left_col_loop_result->var(1));
-            buil.add(store_mem).app_body(left_col_loop_result, body->ret_var());
+            buil.add(store_mem).app_body(mulLoop.body, mulLoop.body->ret_var());
+            buil.mem(mulLoop.finish).app_body(mulLoop.finish, body->ret_var());
             break;
         }
         case MOp::add:
@@ -201,6 +202,48 @@ void LowerMatrix::construct_mop(MOp mop, const Def* elem_type, ConstructHelper& 
             buil.add(right_load_mem).add(sum).app_body(body, body->ret_var());
             break;
         }
+        case MOp::max: {
+            auto index = input.left.getIndex(helper.indices);
+            auto src_ptr = input.left.lea(index);
+
+            auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), src_ptr)->projs<2>();
+
+            auto cmp = world().op(RCmp::g, RMode::none, right_value, helper.vars[0]);
+
+            auto left_max = buil.mem().nom_filter_lam("left_max");
+            auto right_max = buil.mem().nom_filter_lam("right_max");
+            auto max_cmp = buil.mem().nom_lam("max_cmp");
+            max_cmp->branch(true, cmp, left_max, right_max, right_load_mem);
+
+            buil.mem(body).app_body(body, max_cmp);
+
+            buil.mem(left_max).add(right_value).add(index).app_body(left_max, body->ret_var());
+            buil.mem(right_max).add(helper.vars).app_body(right_max, body->ret_var());
+            break;
+        }
+        /*
+
+        case MOp::max: {
+            auto index = input.left.getIndex(helper.indices);
+            auto src_ptr = input.left.lea(index);
+
+            auto [right_load_mem, right_value]  = w.op_load(body->mem_var(), src_ptr)->projs<2>();
+
+            auto cmp = world().op(RCmp::g, RMode::none, right_value, helper.vars[0]);
+
+            auto left_max = buil.mem().nom_filter_lam("left_max");
+            auto right_max = buil.mem().nom_filter_lam("right_max");
+            auto max_cmp = buil.mem().nom_lam("max_cmp");
+            max_cmp->branch(true, cmp, left_max, right_max, right_load_mem);
+
+            buil.mem(body).app_body(body, max_cmp);
+
+            buil.mem(left_max).add(right_value).add(index).app_body(left_max, body->ret_var());
+            buil.mem(right_max).add(helper.vars).app_body(right_max, body->ret_var());
+            break;
+        }
+         * */
+
         case MOp::init: {
             auto lea = input.left.getLea(helper.indices);
             auto store_mem  = w.op_store(body->mem_var(), lea, input.arg);
@@ -274,6 +317,7 @@ void assign_name(Lam* lam, MOp mop, const std::string& suffix = ""){
         case MOp::sdiv: dbg_name = "sdiv"; break;
 
         case MOp::sum: dbg_name = "sum"; break;
+        case MOp::max: dbg_name = "sum"; break;
         case MOp::init: dbg_name = "init"; break;
         case MOp::transpose: dbg_name = "transpose"; break;
 
@@ -326,7 +370,7 @@ const Lam* LowerMatrix::const_reduction(MOp mop, ROp rop, ConstructHelper& helpe
 }*/
 
 bool has_tn_result(MOp mop){
-    return mop != MOp::init && mop != MOp::sum;
+    return mop != MOp::init && mop != MOp::sum && mop != MOp::max;
 }
 
 DefArray tn_result_dims(MOp mop, DefArray args){
@@ -337,7 +381,7 @@ DefArray tn_result_dims(MOp mop, DefArray args){
     if(mop == MOp::transpose ){
         rows = left.getCols();
         cols = left.getRows();
-    }else if(mop == MOp::sum){
+    }else if(mop == MOp::sum || mop == MOp::max){
         rows = left.getRows();
         cols = left.getCols();
     }else{
@@ -389,6 +433,8 @@ const Pi* LowerMatrix::mop_pi(MOp mop, const Def* elem_type, bool has_result_ptr
 
     if(mop == MOp::sum){
         result_builder.add(elem_type);
+    }else if(mop == MOp::max){
+        result_builder.add(elem_type).add(world().type_int_width(64));
     }else if(mop != MOp::init){
         result_builder.type_matrix(2, elem_type);
     }
@@ -432,7 +478,7 @@ const Def* assign_arguments(Lam* lam, MOp mop, const Def* mmode, InputHelper& he
 
         result_mat = w.mat(
                 w.type_tn(2, w.type_real(64)),
-                w.lit_int_width(32, 0),
+                w.lit_int_width(64, 0),
                 lam->var(lam->num_vars() - 2),
                 tn_result_dims(mop, lam->vars())
             );
@@ -470,15 +516,19 @@ const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, const Def* elem_
     auto rows = dims[0];
     auto cols = dims[1];
 
-
     LoopBuilder loopBuilder(world());
 
     if(mop == MOp::sum){
         loopBuilder.addVar(elem_type, zero(world(), elem_type));
+    }else if(mop == MOp::max){
+        loopBuilder.addVar(elem_type, zero(world(), elem_type));
+        loopBuilder.addVar(world().type_int_width(64), world().lit_int_width(64, 0));
     }
 
     if(mop != MOp::vec && mop != MOp::transpose){
         loopBuilder.addLoop(world().op(Wrap::mul, WMode::none, rows, cols)); //1d loop
+    }else if(mop == MOp::vec){
+        loopBuilder.addLoop(rows);
     }else{
         loopBuilder.addLoop(rows); //2d loop
         loopBuilder.addLoop(cols);
@@ -490,15 +540,13 @@ const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, const Def* elem_
         .mem(impl)
         .app_body(impl, result.entry);
 
-    if(mop == MOp::sum){
-        helper.raw_result = result.reductions[0];
-    }
 
     helper.vars = result.vars;
     helper.indices = result.indices;
     helper.body = result.body;
 
     buil.mem(result.finish)
+        .add(result.reductions)
         .add_if_non_null(helper.raw_result)
         .app_body(result.finish, impl->ret_var());
 
@@ -511,20 +559,22 @@ const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, const Def* elem
 
     MOp mop = MOp(mop_axiom->flags());
 
+    bool filter = true;
+
     Lam* entry = mop_lam(mop, elem_type, false, "_entry");
     auto entry_ret_var = entry->ret_var();
     entry->set_filter(true);
 
-    Lam* impl_entry = buil.mem().nom_filter_lam("impl_entry");
+    Lam* impl_entry = buil.mem().filter(filter).nom_filter_lam("impl_entry");
 
     InputHelper entryHelp(w);
 
     assign_arguments(entry, mop, mmode, entryHelp, false);
-    buil.mem(entry).app_body(entry, impl_entry);
+    buil.mem(entry).filter(filter).app_body(entry, impl_entry);
 
     if(is_binary(mop)){
-        auto right_mat_lam = buil.mem().nom_filter_lam("right_mat_lam");
-        auto left_mat_lam = buil.mem().nom_filter_lam("left_mat_lam");
+        auto right_mat_lam = buil.mem().filter(filter).nom_filter_lam("right_mat_lam");
+        auto left_mat_lam = buil.mem().filter(filter).nom_filter_lam("left_mat_lam");
         buil.mem(left_mat_lam).add(entryHelp.left.getMat()).app_body(left_mat_lam, entry_ret_var);
         buil.mem(right_mat_lam).add(entryHelp.right.getMat()).app_body(right_mat_lam, entry_ret_var);
 
@@ -552,31 +602,28 @@ const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, const Def* elem
 
     auto impl = create_MOp_impl(mop_axiom, elem_type, mmode);
 
-    if(has_tn_result(mop)){ //reuse or alloc memory for result of operation
-        /*auto arr_unknown_size_ty = w.arr(w.top_nat(), elem_type)->as<Arr>();
+    if(false && has_tn_result(mop)){ //reuse or alloc memory for result of operation
+        auto arr_unknown_size_ty = w.arr(w.top_nat(), elem_type)->as<Arr>();
         auto ptr_unknown_size = w.type_ptr(arr_unknown_size_ty);
 
-        auto result_size = tn_result_size(mop, entry->var());
+        auto result_size = tn_result_size(mop, entry->vars());
 
         auto default_size = world().lit_int_width(64, 0);
-        //auto ptr_type = w.type_ptr(elem_type, (nat_t)0);
-        auto zero_ptr = w.op_bitcast(ptr_unknown_size, default_size);
 
-        auto default_fat = w.tuple({default_size, zero_ptr});
-        auto holder = w.global(default_fat, true);
-
-        holder->type()->dump();
+        auto default_fat = w.tuple({default_size, w.bot(ptr_unknown_size)});
+        auto holder = w.global(w.type_ptr(default_fat->type(), (nat_t)0), true);
+        holder->set(default_fat);
 
         auto memory_check = buil.mem().nom_lam("memory_check");
-        auto memory_reuse = buil.mem().nom_lam("memory_reuse");
-        auto impl_memory_entry = buil.mem().add(ptr_unknown_size).nom_lam("impl_memory_entry");
-        auto memory_alloc = buil.mem().nom_lam("memory_alloc");
+        auto memory_reuse = buil.mem().filter(filter).nom_filter_lam("memory_reuse");
+        auto memory_alloc = buil.mem().filter(filter).nom_filter_lam("memory_alloc");
+        auto impl_memory_entry = buil.mem().filter(filter).add(ptr_unknown_size).nom_filter_lam("impl_memory_entry");
 
-        auto fat = w.op_load(memory_check->mem_var(), holder);
+        auto [load_mem, fat] = w.op_load(impl_entry->mem_var(), holder)->projs<2>();
         auto fat_ptr_size = w.extract(fat, (u64)0);
         auto fat_ptr = w.extract(fat, (u64)1);
 
-        auto size_cmp = w.op(ICmp::_ge, fat_ptr_size, result_size);
+        auto size_cmp = w.op(ICmp::uge, fat_ptr_size, result_size);
 
         memory_check->branch(false, size_cmp, memory_reuse, memory_alloc, memory_check->mem_var());
 
@@ -600,7 +647,7 @@ const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, const Def* elem
             .app_body(memory_reuse, impl_memory_entry);
 
         buil
-            .mem(impl_entry)
+            .add(load_mem)
             .app_body(impl_entry, memory_check);
 
         buil
@@ -608,10 +655,9 @@ const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, const Def* elem
             .add(entry->vars().skip(1, 1))
             .add(impl_memory_entry->var(1))
             .add(entry->ret_var())
-            .app_body(impl_memory_entry, impl);*/
+            .app_body(impl_memory_entry, impl);
 
-
-
+    }else if(has_tn_result(mop)){
         auto arr_unknown_size_ty = w.arr(w.top_nat(), elem_type)->as<Arr>();
         auto ptr_unknown_size = w.type_ptr(arr_unknown_size_ty);
 
@@ -631,7 +677,6 @@ const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, const Def* elem
                 .add(alloc_ptr)
                 .add(entry->ret_var())
                 .app_body(impl_entry, impl);
-
     }else{
         buil
             .mem(impl_entry)
@@ -669,6 +714,9 @@ Lam* LowerMatrix::rewrite_mop(const App* app, const Def* arg_wrap){
     auto res_buil = buil.mem();
     if(MOp(mop_axiom->flags()) == MOp::sum){
         res_buil.add(elem_type);
+    }else if(MOp(mop_axiom->flags()) == MOp::max){
+        res_buil.add(elem_type);
+        res_buil.add(world().type_int_width(64));
     }else if(MOp(mop_axiom->flags()) != MOp::init){
         res_buil.type_matrix(2, elem_type);
     }
@@ -716,7 +764,7 @@ Lam* LowerMatrix::rewrite_map(const App* app, const Def* arg_wrap){
                 .add(
                         buil.mem().add(out_type).cn()
                 )
-                .set_filter(false)
+                .filter(false)
                 .nom_filter_lam("matrix_unary_entry");
 
         ConstructHelper helper{world()};

@@ -62,7 +62,7 @@ void optimize(World& world) {
     PassMan::run<PartialEval>(world);
     //PassMan::run<Peephole>(world);
 
-    //world.ostream() << world;
+    world.ostream() << world;
 
     PassMan::run<LowerMatrix>(world);
 
