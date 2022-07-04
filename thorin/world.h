@@ -196,6 +196,9 @@ public:
     const Def* sigma(Defs ops, const Def* dbg = {});
     const Def* mat(const Def* mat_type, const Def* meta, const Def* ptr, Defs dims, const Def* dbg = {});
     const Def* mat(const Def* mat_type, Defs ops, const Def* dbg = {});
+
+    const Def* formula(const Def* mem, Defs formula, Defs ops, const Def* dbg = {});
+
     const Sigma* sigma() { return data_.sigma_; } ///< The unit type within Type 0.
     ///@}
 
@@ -420,7 +423,8 @@ public:
     const Axiom* ax_remem()       const { return data_.remem_;   }
     const Axiom* ax_slot()        const { return data_.slot_;    }
     const Axiom* ax_store()       const { return data_.store_;   }
-    const Axiom* ax_map()         const { return data_.map_;   }
+    const Axiom* ax_map()         const { return data_.map_;     }
+    const Axiom* ax_formula()     const { return data_.formula_; }
     // clang-format on
     ///@}
 
@@ -472,6 +476,15 @@ public:
     }
     const Def* op(ROp o, const Def* rmode, const Def* a, const Def* b, const Def* dbg = {}) {
         return app(fn(o, rmode, infer(a)), {a, b}, dbg);
+    }
+
+
+    const Def* elem_ty(const Def* arg){
+        if(auto tn_type = isa<Tag::Tn>(arg)){
+            return tn_type->arg(1);
+        }else{
+            return arg;
+        }
     }
 
     const Def* elem_ty_of_tn(const Def* tensor){
@@ -671,7 +684,7 @@ public:
 
         Builder& flatten(const Def* def ){
             auto isVar = def->isa<Var>();
-            if(isVar || def->num_projs() > 1){
+            if(isVar || (def->num_projs() > 1 && !isa<Tag::Tn>(def->type()))){
                 nat_t i = isVar && !v.empty() ? 1 : 0; //start from 1 if mem already is present
                 nat_t size = def->num_projs();
                 for(; i < size ; i++ ){
@@ -1131,6 +1144,7 @@ private:
         const Axiom* slot_;
         const Axiom* store_;
         const Axiom* map_;
+        const Axiom* formula_;
         const Axiom* type_int_;
         const Axiom* type_mem_;
         const Axiom* type_ptr_;

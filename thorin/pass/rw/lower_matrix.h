@@ -144,36 +144,63 @@ public:
         return bitCheck(3);
     }
 
+    const Def* dim(size_t i){
+        return world.extract(mat, i + 2);
+    }
+
     DefArray dims(){
         auto shape_size = as_lit(world.elem_ty_of_tn(mat->type()));
 
         DefArray result{2};
 
         for(size_t i = 0 ; i < shape_size ; i++){
-            result[i] = world.extract(mat, i + 2);
+            result[i] = dim(i);
         }
 
         return result;
     }
 
-    const Def* getIndex(const DefArray& indices, bool mirror = false){
-        if(indices.size() == 2){
-            auto cols = getCols();
-            auto switcher = mirror ? 1 : 0;
-            return world.row_col_to_index(indices[switcher - 0], indices[1 - switcher], cols);
-        }else if(indices.size() == 1){
-            return indices[0];
-        }else{
-            thorin::unreachable();
-        }
+    const Def* getIndex(const DefArray& indices){
+        return getIndex(indices.size(), [&](auto i){ return indices[i];});
     }
 
     const Def* getIndex(const Def* row, const Def* col){
-        return getIndex({row, col}, false);
+        return getIndex({row, col});
     }
 
-    const Def* getLea(DefArray& indices, bool mirror = false){
-        auto index = getIndex(indices, mirror);
+    const Def* getIndex(size_t size, std::function<const Def*(size_t)> f){
+        const Def* index = nullptr;
+        for( size_t i = 0 ; i < size ; i++ ){
+            auto dim_index = f(i);
+
+            if( i == 0 ){
+                index = dim_index;
+            }else{
+                auto dim_size = dim(i);
+                index = world.op(Wrap::add, (nat_t)0, dim_index, world.op(Wrap::mul, (nat_t)0, index, dim_size));
+            }
+        }
+
+        return index;
+    }
+
+    const Def* getLea(DefArray& indices){
+        return lea(getIndex(indices.size(), [&](auto i){ return indices[i];} ));
+    }
+
+    const Def* getLea(size_t size, std::function<const Def*(size_t)> f){
+        const Def* index = nullptr;
+        for( size_t i = 0 ; i < size ; i++ ){
+            auto dim_index = f(i);
+
+            if( i == 0 ){
+                index = dim_index;
+            }else{
+                auto dim_size = dim(i);
+                index = world.op(Wrap::add, (nat_t)0, dim_index, world.op(Wrap::mul, (nat_t)0, index, dim_size));
+            }
+        }
+
         return lea(index);
     }
 
@@ -249,6 +276,7 @@ public:
     void construct_mop( MOp mop, const Def* elem_type, ConstructHelper& constructResult);
     Lam* rewrite_mop(const App* app, const Def* arg_wrap);
     Lam* rewrite_map(const App* app, const Def* arg_wrap);
+    Lam* rewrite_formula(const App* app, const Def* arg_wrap);
     const Def* alloc_stencil(const Def* stencil, const Def* rows, const Def* cols,  const Def*& mem);
     const Def* rewrite_app(const App* app);
     void store_rec(const Def* value, const Def* mat, const Def* index, const Def*& mem);

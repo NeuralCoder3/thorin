@@ -174,7 +174,7 @@ public:
     }
 
     template<typename Result = T >
-    Array<T> prepend(std::vector<T> values){
+    Array<T> prepend(ArrayRef<T> values){
         auto prepend_size = values.size();
         auto result = Array<Result>(size() + prepend_size);
         for( size_t i = 0 ; i < prepend_size ; i++ ){

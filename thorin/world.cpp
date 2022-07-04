@@ -160,6 +160,13 @@ World::World(std::string_view name)
     }
     {
         // Map: [dims: nat, in: *, out: *] -> [mat[] w] -> m64 w
+        auto ty     = nom_pi(type())->set_dom({type(), type(), type(), type(), type(), type()});
+        auto [lhs_dsc, rhs_dsc, out_dsc, lhs_ty, rhs_ty, out_ty] = ty->vars<6>({dbg("lhs_dsc"), dbg("rhs_dsc"), dbg("out_dsc"), dbg("lhs_ty"), dbg("rhs_ty"), dbg("out_ty")});
+        ty->set_codom(pi({mem, lhs_dsc, rhs_dsc, out_dsc, lhs_ty, rhs_ty}, sigma({mem, out_ty})));
+        data_.formula_ = axiom(nullptr, ty, Tag::Formula, 0, dbg("formula"));
+    }
+    {
+        // Formula: [dims: nat, in: *, out: *] -> [mat[] w] -> m64 w
         auto ty     = nom_pi(type())->set_dom({type(), type(), type()});
         auto [mat_type, out, f_ty] = ty->vars<3>({dbg("mat_type"), dbg("out_sigma"), dbg("f_pi")});
         ty ->set_codom(pi({mem, mat_type, f_ty}, sigma({mem, out})));
@@ -507,6 +514,58 @@ const Def* World::mat(const Def* mat_type, const Def* meta, const Def* ptr, Defs
 
 const Def* World::mat(const Def* mat_type, Defs ops, const Def* dbg) {
     return unify<Mat>(ops.size(), mat_type, ops, dbg);
+}
+
+const Def* World::formula(const Def* mem, Defs equation, Defs ops, const Def* dbg) {
+    auto el_ty = elem_ty(ops[0]->type());
+
+    std::unordered_map<size_t, size_t> map;
+    size_t index = 0;
+
+    DefVec normalized_equation;
+
+    for( auto &eq : equation ){
+        DefVec newEq;
+        for( auto &op : eq->ops() ){
+            auto lit = as_lit(op);
+
+            if( map.contains(lit) ){
+                newEq.push_back(lit_int<u8>(map[lit]));
+            }else{
+                auto new_index = index++;
+                map[lit] = new_index;
+                newEq.push_back(lit_int<u8>(new_index));
+            }
+        }
+
+        auto tup = tuple(newEq);
+        normalized_equation.push_back(tup);
+    }
+
+    auto out_op = normalized_equation[normalized_equation.size() - 1]->as<Tuple>();
+    auto size = out_op->num_ops();
+
+    auto out_type = type_tn(lit_nat(size), el_ty);
+
+
+
+    if(normalized_equation.size() == 3){
+        return app(app(ax_formula(), {
+                normalized_equation[0]->type(),
+                normalized_equation[1]->type(),
+                normalized_equation[2]->type(),
+                ops[0]->type(),
+                ops[1]->type(),
+                out_type}), {mem, normalized_equation[0], normalized_equation[1], normalized_equation[2], ops[0], ops[1]}, dbg);
+    }else{
+        return app(app(ax_formula(), {
+                normalized_equation[0]->type(),
+                top_nat()->type(),
+                normalized_equation[1]->type(),
+                ops[0]->type(),
+                top_nat()->type(),
+                out_type}), {mem, normalized_equation[0], top_nat(), normalized_equation[1], ops[0], top_nat()}, dbg);
+    }
 }
 
 static const Def* infer_sigma(World& world, Defs ops) {

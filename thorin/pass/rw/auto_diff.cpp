@@ -1240,6 +1240,82 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto dst = j_wrap_rop(ROp(rop.flags()), a, b);
         return dst;
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (auto formula = isa<Tag::Formula>(def)) {
+
+        auto map_app = formula->callee()->as<App>();
+        auto map_axiom = map_app->callee()->as<Axiom>();
+
+        auto mem = formula->arg(0);
+        auto lhs_eq = formula->arg(1);
+        auto rhs_eq = formula->arg(2);
+        auto res_eq = formula->arg(3);
+        auto lhs_tn = j_wrap(formula->arg(4));
+        auto rhs_tn = j_wrap(formula->arg(5));
+
+        auto res_type = formula->type()->proj(1);
+
+        auto pbpi = createPbType(A,res_type);
+
+        assert(pullbacks_.contains(lhs_tn) && "Pullbacks for MOp arguments should already be created");
+        assert(pullbacks_.contains(rhs_tn) && "Pullbacks for MOp arguments should already be created");
+        // pullbacks of the arguments
+        auto apb = pullbacks_[lhs_tn];
+        auto bpb = pullbacks_[rhs_tn];
+
+        auto pbT = bpb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
+        auto pb = world_.nom_filter_lam(pbpi,world_.lit_false(),  world_.dbg("phi_"));
+
+        // shortened pullback type => takes pullback result (A) And continues
+        // always expand operation pullbacks
+        auto middle = world_.nom_filter_lam(pbT,world_.lit_false(),  world_.dbg("phi_middle"));
+        auto end = world_.nom_filter_lam(pbT,world_.lit_false(),  world_.dbg("phi_end"));
+
+        auto [dst_mem, dst_res] = world_.formula(current_mem, {lhs_eq, rhs_eq, res_eq}, {lhs_tn, rhs_tn})->projs<2>();
+
+        current_mem = dst_mem;
+
+        auto [left_diff_mem, left_diff_mat] = world_.formula(pb->mem_var(),{rhs_eq, res_eq, lhs_eq}, {rhs_tn, pb->var(1) } )->projs<2>();
+        pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
+
+        auto [right_diff_mem, right_diff_mat] = world_.formula(middle->mem_var(), {lhs_eq, res_eq, rhs_eq}, {lhs_tn, pb->var(1)})->projs<2>();
+        middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
+
+        auto adiff = world_.tuple(vars_without_mem_cont(middle));
+        auto bdiff = world_.tuple(vars_without_mem_cont(end));
+        auto sum_pb = vec_add(world_,adiff,bdiff,pb->ret_var());
+        end->set_body(world_.app(sum_pb, end->mem_var()));
+
+        auto result = world_.tuple({dst_mem, dst_res});
+        pullbacks_[result] = pb;
+        return result;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     if (auto mop = isa<Tag::Map>(def)) {
         auto mem = j_wrap(mop->arg(0));
         auto mat = j_wrap(mop->arg(1));

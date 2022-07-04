@@ -185,7 +185,7 @@ void LowerMatrix::construct_mop(MOp mop, const Def* elem_type, ConstructHelper& 
             break;
         }
         case MOp::transpose: {
-            auto src_ptr = input.left.getLea(helper.indices, true);
+            auto src_ptr = input.left.getLea(helper.indices[1], helper.indices[0] );
             auto dst_lea = helper.result.getLea(helper.indices);
 
             auto [right_load_mem, right_value] = w.op_load(body->mem_var(), src_ptr)->projs<2>();
@@ -741,6 +741,176 @@ void LowerMatrix::store_rec(const Def* value, const Def* mat, const Def* index, 
 }
 
 
+struct FormulaHelper{
+    bool unary = false;
+    std::vector<size_t> lhs_indices;
+    std::vector<size_t> rhs_indices;
+    std::vector<size_t> res_indices;
+
+    size_t lhs_dim;
+    size_t rhs_dim;
+    size_t res_dim;
+
+    std::vector<size_t> order2index;
+    std::vector<size_t> index2order;
+    std::vector<const Def*> sizes;
+};
+
+FormulaHelper constructHelper(const Def* lhs, const Def* rhs, const Def* out, const Def* lhs_tn, const Def* rhs_tn){
+    std::unordered_map<size_t, size_t> count;
+
+    FormulaHelper helper;
+
+    DefVec ops = {lhs, rhs, out};
+    DefVec tns = {lhs_tn, rhs_tn};
+
+    size_t list_index = 0;
+    for( auto *eq_part : ops ){
+        if(auto tuple = eq_part->isa<Tuple>()){
+            size_t dim_index = 0;
+            (&helper.lhs_dim)[list_index] = tuple->num_ops();
+            for( auto index_op : tuple->ops() ){
+                auto index = as_lit(index_op);
+
+                (&helper.lhs_indices)[list_index].push_back(index);
+
+                if(count.contains(index)){
+                    count[index] = count[index] + dim_index;
+                }else{
+                    assert(list_index < 2);
+                    MatrixHelper matrix(tns[list_index]);
+                    helper.sizes.push_back(matrix.dim(dim_index));
+                    count[index] = dim_index;
+                }
+
+                dim_index++;
+            }
+
+        }else if(list_index == 1){
+            helper.unary = true;
+        }
+
+        list_index++;
+    }
+
+    helper.order2index.reserve(count.size());
+    helper.index2order.reserve(count.size());
+    for(auto const& entries: count){
+        helper.order2index.push_back(entries.first);
+    }
+
+    sort(helper.order2index.begin(), helper.order2index.end(), [&](size_t i1, size_t i2)
+    {
+        return (count[i1] < count[i2]);
+    });
+
+    for( size_t i = 0 ; i < helper.order2index.size() ; i++){
+        helper.index2order[helper.order2index[i]] = i;
+    }
+
+    return helper;
+}
+
+
+Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
+    auto map_app = app->callee()->as<App>();
+    auto map_axiom = map_app->callee()->as<Axiom>();
+
+    auto mem = arg_wrap->op(0);
+
+    auto lhs_eq = arg_wrap->op(1);
+    auto rhs_eq = arg_wrap->op(2);
+    auto out_eq = arg_wrap->op(3);
+
+    auto lhs_tn = arg_wrap->op(4);
+    auto rhs_tn = arg_wrap->op(5);
+
+    FormulaHelper helper = constructHelper(lhs_eq, rhs_eq, out_eq, lhs_tn, rhs_tn);
+
+    LoopBuilder loopBuilder(world());
+    for( size_t order_index = 0; order_index < helper.order2index.size() ; order_index++ ){
+        auto loop_index = helper.order2index[order_index];
+        auto loop_size = helper.sizes[loop_index];
+
+        loopBuilder.addLoop(loop_size);
+    }
+    NestedLoops loops = loopBuilder.build();
+
+    auto loop_size = loops.indices.size();
+
+    auto builder = buil.mem().add(lhs_tn->type());
+
+    if(!helper.unary){
+        builder.add(rhs_tn->type());
+    }
+
+    DefVec out_dims;
+    for( auto index : helper.res_indices ){
+        auto size = helper.sizes[index];
+        out_dims.push_back(size);
+    }
+    auto elem_type = world().elem_ty_of_tn(lhs_tn->type());
+    auto tn_type = world().type_tn(out_dims.size(), elem_type);
+
+    auto entry = builder
+            .add( buil.mem().add(tn_type).cn() )
+            .filter(false)
+            .nom_filter_lam("tn_formula_entry");
+
+    auto [result_mem, result_mat] = world().op_create_matrix(elem_type, out_dims, entry->mem_var(), true)->projs<2>();
+
+    buil.add(result_mem).app_body(entry, loops.entry);
+
+    MatrixHelper lhs_help(lhs_tn);
+    MatrixHelper res_help(result_mat);
+
+    World &w = world();
+
+    auto mapper = [&](std::vector<size_t>& loop_mapping){
+        return [&](auto i){
+            return loops.indices[helper.index2order[loop_mapping[i]]];
+        };
+    };
+
+    auto left_ptr = lhs_help.getLea(helper.lhs_dim, mapper(helper.lhs_indices));
+    auto result_lea = res_help.getLea(helper.res_dim, mapper(helper.res_indices));
+    auto [result_load_mem, carry] = w.op_load(loops.body->mem_var(), result_lea)->projs<2>();
+    auto [left_load_mem, left_value] = w.op_load(result_load_mem, left_ptr)->projs<2>();
+
+    const Def* before_store_mem;
+    const Def* value;
+    if(helper.unary){
+        before_store_mem = left_load_mem;
+        value = left_value;
+    }else{
+        MatrixHelper rhs_helper(rhs_tn);
+        auto right_ptr = rhs_helper.getLea(helper.rhs_dim, mapper(helper.rhs_indices));
+        auto [right_load_mem, right_value] = w.op_load(left_load_mem, right_ptr)->projs<2>();
+        value = mul_add(w, elem_type, left_value, right_value, carry);
+        before_store_mem = right_load_mem;
+    }
+
+    auto store_mem = w.op_store(before_store_mem, result_lea, value);
+
+    buil.add(store_mem).app_body(loops.body, loops.body->ret_var());
+    buil.mem(loops.finish).add(result_mat).app_body(loops.finish, entry->ret_var());
+
+    auto result_lam = buil.mem()
+            .add(tn_type)
+            .nom_filter_lam("tn_formula_result");
+
+    auto entry_call_buil = buil.add(mem).add(lhs_tn);
+
+
+    if(!helper.unary){
+        entry_call_buil.add(rhs_tn);
+    }
+
+    entry_call_buil.add(result_lam).app_body(chainHelper.tail, entry);
+
+    return result_lam;
+}
+
 Lam* LowerMatrix::rewrite_map(const App* app, const Def* arg_wrap){
     auto map_app = app->callee()->as<App>();
     auto map_axiom = map_app->callee()->as<Axiom>();
@@ -815,6 +985,8 @@ const Def* LowerMatrix::rewrite_app(const App* app){
         result_lam = rewrite_mop(app, arg_wrap);
     }else if(isa<Tag::Map>(app)){
         result_lam = rewrite_map(app, arg_wrap);
+    }else if(isa<Tag::Formula>(app)){
+        result_lam = rewrite_formula(app, arg_wrap);
     }else{
         thorin::unreachable();
     }
@@ -841,7 +1013,7 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         chainHelper.tail->set_body(result);
         chainHelper = oldHelper;
         return lam;
-    }else if (isa<Tag::MOp>(current) || isa<Tag::Map>(current)) {
+    }else if (isa<Tag::MOp>(current) || isa<Tag::Map>(current) || isa<Tag::Formula>(current)) {
         return rewrite_app(current->as<App>());
     }else if(auto mat = isa<Tag::Tn>(current->type())){
         return current->rebuild(world(), current->type(), current->ops().map([&](auto elem, auto){return rewrite_rec(elem);}), mat->dbg());
