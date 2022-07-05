@@ -160,9 +160,9 @@ World::World(std::string_view name)
     }
     {
         // Map: [dims: nat, in: *, out: *] -> [mat[] w] -> m64 w
-        auto ty     = nom_pi(type())->set_dom({type(), type(), type(), type()});
-        auto [dsc, lhs_ty, rhs_ty, out_ty] = ty->vars<4>({dbg("dsc"), dbg("lhs_ty"), dbg("rhs_ty"), dbg("out_ty")});
-        ty->set_codom(pi({mem, dsc, lhs_ty, rhs_ty}, sigma({mem, out_ty})));
+        auto ty     = nom_pi(type())->set_dom({type(), type(), type()});
+        auto [dsc, input_ty, out_ty] = ty->vars<3>({dbg("dsc"), dbg("input_ty"), dbg("out_ty")});
+        ty->set_codom(pi({mem, dsc, input_ty}, sigma({mem, out_ty})));
         data_.formula_ = axiom(nullptr, ty, Tag::Formula, 0, dbg("formula"));
     }
     {
@@ -530,13 +530,20 @@ const Def* World::serialize_equation(Equation& formula){
         }
     };
 
-    for( auto &output : formula.inputs ){
+    for( auto &input : formula.inputs ){
         if(first){
             first = false;
         }else{
             elem_helper(formula.op);
         }
-        list_helper(output);
+
+        if( input.variant == EquationInput::Dimension ){
+            list_helper(input.vars);
+        }else{
+            elem_helper('{');
+            list_helper(input.vars);
+            elem_helper('}');
+        }
     }
 
     elem_helper('=');
@@ -551,6 +558,8 @@ void parse_equation(size_t size, std::function<u8(size_t)> f, Equation& formula)
 
     size_t slot_i = 0;
     bool is_out = false;
+    bool start_element = true;
+
     for (size_t cha_i = 0 ; cha_i < size ; cha_i++) {
         auto cha = f(cha_i);
 
@@ -561,12 +570,27 @@ void parse_equation(size_t size, std::function<u8(size_t)> f, Equation& formula)
             if(formula.inputs.size() <= slot_i){
                 formula.inputs.resize(slot_i + 1);
             }
-            list = &formula.inputs[slot_i];
+
+            list = &formula.inputs[slot_i].vars;
         }
 
+        if(start_element){
+            EquationInput::Variant variant = EquationInput::Dimension;
+            if( cha == '{'){
+                cha_i++;
+                cha = f(cha_i);
+                variant = EquationInput::Tensor;
+            }
+
+            if(!is_out){
+                formula.inputs[slot_i].variant = variant;
+            }
+        }
+
+        start_element = false;
         if(std::isalpha(cha)){
             list->push_back(cha);
-        }else if(!std::isspace(cha)){
+        }else if(!std::isspace(cha) && cha != '}'){
             assert(!is_out);
 
             if( cha == '=' ){
@@ -575,7 +599,9 @@ void parse_equation(size_t size, std::function<u8(size_t)> f, Equation& formula)
                 slot_i++;
                 formula.op = cha;
             }
+            start_element = true;
         }
+
     }
 }
 
@@ -587,11 +613,11 @@ void parse_equation(std::string equation, Equation& formula) {
     parse_equation(equation.size(), [&](size_t i){ return equation[i]; }, formula);
 }
 
-const Def* World::formula(const Def* mem, const Def* equation, Defs ops, const Def* dbg) {
-    auto el_ty = elem_ty(ops[0]->type());
-
+const Def* normalizeEquation(const Def* equation){
     std::unordered_map<size_t, size_t> map;
     size_t current_id = 'a';
+
+    World& w = equation->world();
 
     DefVec normalized_equation;
     for( auto &element : equation->ops() ){
@@ -609,15 +635,34 @@ const Def* World::formula(const Def* mem, const Def* equation, Defs ops, const D
             cha = lit;
         }
 
-        normalized_equation.push_back(lit_int<u8>(cha));
+        normalized_equation.push_back(w.lit_int<u8>(cha));
     }
 
-    auto eq_tup = tuple(normalized_equation);
+    return w.tuple(normalized_equation);
+}
+
+const Def* World::formula(const Def* mem, const Def* equation, Defs ops, const Def* dbg) {
+    auto eq_tup = normalizeEquation(equation);
 
     Equation formula;
     thorin::parse_equation(eq_tup, formula);
 
     auto out_size = formula.output.size();
+
+    const Def* el_ty = nullptr;
+
+    size_t i = 0;
+    for( auto &input : formula.inputs ){
+        if(input.variant == EquationInput::Tensor){
+            el_ty = ops[i]->type();
+            if( auto tn = isa<Tag::Tn>(el_ty) ){
+                el_ty = elem_ty_of_tn(tn);
+            }
+            break;
+        }
+
+        i++;
+    }
 
     const Def* out_type;
     if( out_size == 0 ){
@@ -633,11 +678,12 @@ const Def* World::formula(const Def* mem, const Def* equation, Defs ops, const D
         second_op = ops[1];
     }
 
+    auto input_tup = tuple(ops);
+
     return app(app(ax_formula(), {
             eq_tup->type(),
-            ops[0]->type(),
-            second_op->type(),
-            out_type}), {mem, eq_tup, ops[0], second_op}, dbg);
+            input_tup->type(),
+            out_type}), {mem, eq_tup, input_tup}, dbg);
 }
 
 static const Def* infer_sigma(World& world, Defs ops) {

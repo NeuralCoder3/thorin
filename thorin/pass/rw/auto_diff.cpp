@@ -1274,7 +1274,7 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto pb = world_.nom_filter_lam(pbpi,world_.lit_false(),  world_.dbg("phi_"));
 
         const Def* rhs_tn = world_.top_nat();
-        if(equation.op == 0){
+        /*if(equation.op == 0){
             Equation left_diff({equation.output}, equation.inputs[0], equation.op);
             auto diff_eq = world_.serialize_equation(left_diff);
             auto [left_diff_mem, left_diff_mat] = world_.formula(pb->mem_var(), diff_eq, {pb->var(1) , world_.type_nat() } )->projs<2>();
@@ -1304,7 +1304,7 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
             auto bdiff = world_.tuple(vars_without_mem_cont(end));
             auto sum_pb = vec_add(world_,adiff,bdiff,pb->ret_var());
             end->set_body(world_.app(sum_pb, end->mem_var()));
-        }
+        }*/
 
 
         auto [dst_mem, dst_res] = world_.formula(current_mem, eq, {lhs_tn, rhs_tn})->projs<2>();

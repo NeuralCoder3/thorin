@@ -22,13 +22,22 @@ class ErrorHandler;
 class RecStreamer;
 class Scope;
 
+struct EquationInput{
+    enum Variant{
+        Tensor, Dimension
+    };
+
+    Variant variant;
+    std::vector<u8> vars;
+};
+
 struct Equation{
-    std::vector<std::vector<u8>> inputs;
+    std::vector<EquationInput> inputs;
     std::vector<u8> output;
     char op;
 
     Equation() : op(0){}
-    Equation(std::vector<std::vector<u8>> inputs, std::vector<u8> output, char op = 0)
+    Equation(std::vector<EquationInput> inputs, std::vector<u8> output, char op = 0)
         : inputs(std::move(inputs)),
           output(std::move(output)),
           op(op){ }
@@ -830,6 +839,8 @@ public:
     }
 
     const Lam* repeat(const Def* count, const Lam* yield, Defs extra = {} ){
+        count = op(Conv::u2u, type_int_width(64), count);
+
         auto loop_entry = builder()
                 .mem()
                 .add(extra)

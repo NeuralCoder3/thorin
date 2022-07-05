@@ -751,62 +751,86 @@ struct FormulaHelper{
     const Def* elem_type = nullptr;
     const Def* result_type = nullptr;
 
+    std::vector<const Def*> val_input;
+
     std::vector<size_t> lhs_indices;
     std::vector<size_t> rhs_indices;
     std::vector<size_t> res_indices;
 
-    size_t lhs_dim;
-    size_t rhs_dim;
-    size_t res_dim;
+    size_t lhs_dim = 0;
+    size_t rhs_dim = 0;
+    size_t res_dim = 0;
 
     std::vector<size_t> order2index;
     std::vector<size_t> index2order;
     std::vector<const Def*> sizes;
 };
 
-FormulaHelper constructHelper(const Def* eq, const Def* lhs_tn, const Def* rhs_tn){
+FormulaHelper constructHelper(const Def* eq, const Def* input){
 
     auto size = eq->num_ops();
 
     std::unordered_map<size_t, size_t> count;
     FormulaHelper helper;
 
-
-    DefVec tns = {lhs_tn, rhs_tn};
-
     Equation formula;
     thorin::parse_equation(eq, formula);
 
-    helper.unary = formula.op == 0;
-
-    size_t list_index = 0;
+    size_t val_index = 0;
+    size_t in_index = 0;
     size_t dim_index = 0;
 
     for( auto &eq_part : formula.inputs ){
+        auto &vars = eq_part.vars;
         dim_index = 0;
-        (&helper.lhs_dim)[list_index] = eq_part.size();
-        for( auto index_op : eq_part ){
-            auto index = index_op - 'a';
 
-            (&helper.lhs_indices)[list_index].push_back(index);
+        auto current_input = input->op(in_index);
 
-            if(count.contains(index)){
-                count[index] = count[index] + dim_index;
-            }else{
-                MatrixHelper matrix(tns[list_index]);
+        if(eq_part.variant == EquationInput::Tensor){
+            auto dim = vars.size();
+            (&helper.lhs_dim)[val_index] = dim;
 
-                if(helper.elem_type == nullptr){
-                    helper.elem_type = matrix.elem_type();
+            if(dim > 0){
+                for( auto index_op : vars ){
+                    auto index = index_op - 'a';
+
+                    (&helper.lhs_indices)[val_index].push_back(index);
+
+                    if(count.contains(index)){
+                        count[index] = count[index] + dim_index;
+                    }else{
+                        MatrixHelper matrix(current_input);
+
+                        if(helper.elem_type == nullptr){
+                            helper.elem_type = matrix.elem_type();
+                        }
+
+                        helper.sizes.push_back(matrix.dim(dim_index));
+                        count[index] = dim_index;
+                    }
+
+                    dim_index++;
                 }
-
-                helper.sizes.push_back(matrix.dim(dim_index));
-                count[index] = dim_index;
+            }else if(helper.elem_type == nullptr){
+                helper.elem_type = current_input->type();
             }
 
-            dim_index++;
+            helper.val_input.push_back(current_input);
+            val_index++;
+        }else{
+            for( auto index_op : vars ){
+                auto index = index_op - 'a';
+
+                if(!count.contains(index)){
+                    count[index] = 0;
+                    helper.sizes.push_back(current_input);
+                }
+
+                dim_index++;
+            }
         }
 
-        list_index++;
+        in_index++;
     }
 
 
@@ -837,6 +861,7 @@ FormulaHelper constructHelper(const Def* eq, const Def* lhs_tn, const Def* rhs_t
         helper.index2order[helper.order2index[i]] = i;
     }
 
+    helper.unary = helper.val_input.size() < 2;
     return helper;
 }
 
@@ -848,12 +873,13 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
     auto mem = arg_wrap->op(0);
 
     auto eq = arg_wrap->op(1);
+    auto input = arg_wrap->op(2);
 
 
-    auto lhs_tn = arg_wrap->op(2);
-    auto rhs_tn = arg_wrap->op(3);
+    FormulaHelper helper = constructHelper(eq, input);
 
-    FormulaHelper helper = constructHelper(eq, lhs_tn, rhs_tn);
+    auto lhs_tn = helper.val_input[0];
+    auto rhs_tn = helper.val_input[1];
 
     LoopBuilder loopBuilder(world());
     for( size_t order_index = 0; order_index < helper.order2index.size() ; order_index++ ){
@@ -910,7 +936,6 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
     buil.add(after_entry_mem).app_body(entry, loops.entry);
     buil.mem(loops.finish).add(result).app_body(loops.finish, entry->ret_var());
 
-    MatrixHelper lhs_help(lhs_tn);
 
     World &w = world();
 
@@ -920,7 +945,6 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
         };
     };
 
-    auto left_ptr = lhs_help.getLea(helper.lhs_dim, mapper(helper.lhs_indices));
 
     const Def* result_lea = nullptr;
     const Def* carry;
@@ -935,17 +959,27 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
         before_left_load_mem = result_load_mem;
     }
 
-    auto [left_load_mem, left_value] = w.op_load(before_left_load_mem, left_ptr)->projs<2>();
+    const Def* left_value;
+    const Def* before_right_load_mem = before_left_load_mem;
+    if( helper.rhs_dim == 0){
+        left_value = lhs_tn;
+    }else{
+        MatrixHelper lhs_help(lhs_tn);
+        auto left_ptr = lhs_help.getLea(helper.lhs_dim, mapper(helper.lhs_indices));
+        auto [left_load_mem, left_value_tmp] = w.op_load(before_left_load_mem, left_ptr)->projs<2>();
+        before_right_load_mem = left_load_mem;
+        left_value = left_value_tmp;
+    }
 
     const Def* before_store_mem;
     const Def* value;
     if(helper.unary){
-        before_store_mem = left_load_mem;
+        before_store_mem = before_right_load_mem;
         value = left_value;
     }else{
         MatrixHelper rhs_helper(rhs_tn);
         auto right_ptr = rhs_helper.getLea(helper.rhs_dim, mapper(helper.rhs_indices));
-        auto [right_load_mem, right_value] = w.op_load(left_load_mem, right_ptr)->projs<2>();
+        auto [right_load_mem, right_value] = w.op_load(before_right_load_mem, right_ptr)->projs<2>();
         value = mul_add(w, helper.elem_type, left_value, right_value, carry);
         before_store_mem = right_load_mem;
     }
