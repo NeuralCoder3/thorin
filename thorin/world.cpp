@@ -160,9 +160,9 @@ World::World(std::string_view name)
     }
     {
         // Map: [dims: nat, in: *, out: *] -> [mat[] w] -> m64 w
-        auto ty     = nom_pi(type())->set_dom({type(), type(), type(), type(), type(), type()});
-        auto [lhs_dsc, rhs_dsc, out_dsc, lhs_ty, rhs_ty, out_ty] = ty->vars<6>({dbg("lhs_dsc"), dbg("rhs_dsc"), dbg("out_dsc"), dbg("lhs_ty"), dbg("rhs_ty"), dbg("out_ty")});
-        ty->set_codom(pi({mem, lhs_dsc, rhs_dsc, out_dsc, lhs_ty, rhs_ty}, sigma({mem, out_ty})));
+        auto ty     = nom_pi(type())->set_dom({type(), type(), type(), type()});
+        auto [dsc, lhs_ty, rhs_ty, out_ty] = ty->vars<4>({dbg("dsc"), dbg("lhs_ty"), dbg("rhs_ty"), dbg("out_ty")});
+        ty->set_codom(pi({mem, dsc, lhs_ty, rhs_ty}, sigma({mem, out_ty})));
         data_.formula_ = axiom(nullptr, ty, Tag::Formula, 0, dbg("formula"));
     }
     {
@@ -516,23 +516,75 @@ const Def* World::mat(const Def* mat_type, Defs ops, const Def* dbg) {
     return unify<Mat>(ops.size(), mat_type, ops, dbg);
 }
 
-const Def* World::formula(const Def* mem, Defs equation, Defs ops, const Def* dbg) {
+inline Defs equation_elements(const Def* eq){
+    Defs result;
+    if(eq->isa<Tuple>()){
+        result = eq->ops();
+    }else{
+        result = DefArray {eq};
+    }
+
+    return result;
+}
+
+Formula parse_formula(const Def* equation, Formula& formula) {
+    formula.inputs.clear();
+    formula.output.clear();
+
+    size_t i = 0;
+    bool is_out = false;
+    for (auto &eq: equation->ops()) {
+        auto cha = as_lit(eq);
+
+        std::vector<u8> *list;
+        if(is_out){
+            list = &formula.output;
+        }else{
+            list = &formula.inputs[i];
+        }
+
+        if(std::isalpha(cha)){
+            list->push_back(cha);
+        }else if(!std::isspace(cha)){
+            assert(!is_out);
+
+            if( cha == '=' ){
+                is_out = true;
+            }else{
+                i++;
+            }
+        }
+    }
+
+    return formula;
+}
+
+const Def* World::formula(const Def* mem, const Def* equation, Defs ops, const Def* dbg) {
     auto el_ty = elem_ty(ops[0]->type());
 
     std::unordered_map<size_t, size_t> map;
-    size_t index = 0;
+    size_t current_id = 'a';
 
     DefVec normalized_equation;
 
-    for( auto &eq : equation ){
+    for( auto &eq : equation->ops() ){
         DefVec newEq;
-        for( auto &op : eq->ops() ){
+
+        Defs elements;
+        if(eq->isa<Tuple>()){
+            elements = eq->ops();
+        }else{
+            elements = DefArray {eq};
+        }
+
+        for( auto &op : elements ){
+            op->dump();
             auto lit = as_lit(op);
 
             if( map.contains(lit) ){
                 newEq.push_back(lit_int<u8>(map[lit]));
             }else{
-                auto new_index = index++;
+                auto new_index = current_id++;
                 map[lit] = new_index;
                 newEq.push_back(lit_int<u8>(new_index));
             }
@@ -542,30 +594,28 @@ const Def* World::formula(const Def* mem, Defs equation, Defs ops, const Def* db
         normalized_equation.push_back(tup);
     }
 
-    auto out_op = normalized_equation[normalized_equation.size() - 1]->as<Tuple>();
-    auto size = out_op->num_ops();
+    auto out_op = equation_elements(normalized_equation[normalized_equation.size() - 1]);
+    auto size = out_op.size();
 
     auto out_type = type_tn(lit_nat(size), el_ty);
 
-
-
+    const Def* second_op;
     if(normalized_equation.size() == 3){
-        return app(app(ax_formula(), {
-                normalized_equation[0]->type(),
-                normalized_equation[1]->type(),
-                normalized_equation[2]->type(),
-                ops[0]->type(),
-                ops[1]->type(),
-                out_type}), {mem, normalized_equation[0], normalized_equation[1], normalized_equation[2], ops[0], ops[1]}, dbg);
+        second_op = ops[1];
     }else{
-        return app(app(ax_formula(), {
-                normalized_equation[0]->type(),
-                top_nat()->type(),
-                normalized_equation[1]->type(),
-                ops[0]->type(),
-                top_nat()->type(),
-                out_type}), {mem, normalized_equation[0], top_nat(), normalized_equation[1], ops[0], top_nat()}, dbg);
+        second_op = top_nat();
     }
+
+    auto eq_tup = tuple(normalized_equation);
+
+    equation->dump();
+    eq_tup->dump();
+
+    return app(app(ax_formula(), {
+            eq_tup->type(),
+            ops[0]->type(),
+            second_op->type(),
+            out_type}), {mem, eq_tup, ops[0], second_op}, dbg);
 }
 
 static const Def* infer_sigma(World& world, Defs ops) {

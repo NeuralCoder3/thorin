@@ -148,12 +148,16 @@ public:
         return world.extract(mat, i + 2);
     }
 
+    size_t shape_size(){
+        return as_lit(world.dim_count_of_tn(mat->type()));
+    }
+
     DefArray dims(){
-        auto shape_size = as_lit(world.elem_ty_of_tn(mat->type()));
+        auto size = shape_size();
 
         DefArray result{2};
 
-        for(size_t i = 0 ; i < shape_size ; i++){
+        for(size_t i = 0 ; i < size ; i++){
             result[i] = dim(i);
         }
 
@@ -182,6 +186,21 @@ public:
         }
 
         return index;
+    }
+
+    const Def* getSize(){
+        const Def* size = nullptr;
+        for( size_t i = 0 ; i < shape_size() ; i++ ){
+            auto dim_size = dim(i);
+
+            if( i == 0 ){
+                size = dim_size;
+            }else{
+                size = world.op(Wrap::mul, (nat_t)0, size, dim_size);
+            }
+        }
+
+        return size;
     }
 
     const Def* getLea(DefArray& indices){
@@ -270,8 +289,8 @@ public:
     const Def* rewrite_rec(const Def* current, bool convert = true);
     const Def* rewrite_rec_convert(const Def* current);
     //const Lam* const_reduction(MOp mop, ROp rop,ConstructHelper& helper);
-    const Lam* create_MOp_entry(const Axiom* mop_axiom, const Def* elem_type, const Def* mmode);
-    const Lam* create_MOp_impl(const Axiom* mop_axiom, const Def* elem_type, const Def* rmode);
+    const Lam* create_MOp_entry(const Axiom* mop_axiom, size_t dims, const Def* elem_type, const Def* mmode);
+    const Lam* create_MOp_impl(const Axiom* mop_axiom, size_t dims, const Def* elem_type, const Def* rmode);
     void construct_mat_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, const Def* alloc_rows, const Def* alloc_cols, bool flatten, ConstructHelper& constructResult);
     void construct_mop( MOp mop, const Def* elem_type, ConstructHelper& constructResult);
     Lam* rewrite_mop(const App* app, const Def* arg_wrap);
@@ -281,8 +300,8 @@ public:
     const Def* rewrite_app(const App* app);
     void store_rec(const Def* value, const Def* mat, const Def* index, const Def*& mem);
 
-    const Pi* mop_pi(MOp mop, const Def* elem_type, bool has_result_ptr);
-    Lam* mop_lam(MOp mop, const Def* elem_type, bool has_result_ptr, const std::string& name);
+    const Pi* mop_pi(MOp mop, size_t dims, const Def* elem_type, bool has_result_ptr);
+    Lam* mop_lam(MOp mop, size_t dims, const Def* elem_type, bool has_result_ptr, const std::string& name);
 
     ChainHelper chainHelper;
 

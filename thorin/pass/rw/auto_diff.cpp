@@ -1259,11 +1259,12 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto map_axiom = map_app->callee()->as<Axiom>();
 
         auto mem = formula->arg(0);
-        auto lhs_eq = formula->arg(1);
-        auto rhs_eq = formula->arg(2);
-        auto res_eq = formula->arg(3);
-        auto lhs_tn = j_wrap(formula->arg(4));
-        auto rhs_tn = j_wrap(formula->arg(5));
+        auto eq = formula->arg(1);
+        auto lhs_eq = eq->op(0);
+        auto rhs_eq = eq->op(1);
+        auto res_eq = eq->op(2);
+        auto lhs_tn = j_wrap(formula->arg(2));
+        auto rhs_tn = j_wrap(formula->arg(3));
 
         auto res_type = formula->type()->proj(1);
 
@@ -1283,14 +1284,14 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto middle = world_.nom_filter_lam(pbT,world_.lit_false(),  world_.dbg("phi_middle"));
         auto end = world_.nom_filter_lam(pbT,world_.lit_false(),  world_.dbg("phi_end"));
 
-        auto [dst_mem, dst_res] = world_.formula(current_mem, {lhs_eq, rhs_eq, res_eq}, {lhs_tn, rhs_tn})->projs<2>();
+        auto [dst_mem, dst_res] = world_.formula(current_mem, eq, {lhs_tn, rhs_tn})->projs<2>();
 
         current_mem = dst_mem;
 
-        auto [left_diff_mem, left_diff_mat] = world_.formula(pb->mem_var(),{rhs_eq, res_eq, lhs_eq}, {rhs_tn, pb->var(1) } )->projs<2>();
+        auto [left_diff_mem, left_diff_mat] = world_.formula(pb->mem_var(), world_.tuple({rhs_eq, res_eq, lhs_eq}), {rhs_tn, pb->var(1) } )->projs<2>();
         pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
 
-        auto [right_diff_mem, right_diff_mat] = world_.formula(middle->mem_var(), {lhs_eq, res_eq, rhs_eq}, {lhs_tn, pb->var(1)})->projs<2>();
+        auto [right_diff_mem, right_diff_mat] = world_.formula(middle->mem_var(),world_.tuple({lhs_eq, res_eq, rhs_eq}), {lhs_tn, pb->var(1)})->projs<2>();
         middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
 
         auto adiff = world_.tuple(vars_without_mem_cont(middle));

@@ -22,6 +22,11 @@ class ErrorHandler;
 class RecStreamer;
 class Scope;
 
+struct Formula{
+    std::vector<std::vector<u8>> inputs;
+    std::vector<u8> output;
+};
+
 /// The World represents the whole program and manages creation of Thorin nodes (Def%s).
 /// *Structural* Def%s are hashed into an internal HashSet.
 /// The getters just calculate a hash and lookup the Def, if it is already present, or create a new one otherwise.
@@ -197,7 +202,8 @@ public:
     const Def* mat(const Def* mat_type, const Def* meta, const Def* ptr, Defs dims, const Def* dbg = {});
     const Def* mat(const Def* mat_type, Defs ops, const Def* dbg = {});
 
-    const Def* formula(const Def* mem, Defs formula, Defs ops, const Def* dbg = {});
+    const Def* formula(const Def* mem, const Def* formula, Defs ops, const Def* dbg = {});
+    void parse_formula(const Def* equation, Formula& formula);
 
     const Sigma* sigma() { return data_.sigma_; } ///< The unit type within Type 0.
     ///@}
@@ -504,13 +510,19 @@ public:
 
     const Def* type_mat_tuple(const Def* mat){
         if (auto mat_type = isa<Tag::Tn>(mat)) {
+            auto dims = as_lit(dim_count_of_tn(mat_type));
             auto elem_type = elem_ty_of_tn(mat_type);
-            return sigma({
-                 type_int_width(64),
-                 type_ptr(arr(top_nat(), elem_type)),
-                 type_int_width(64),
-                 type_int_width(64),
-             });
+
+            DefVec vec;
+
+            vec.push_back(type_int_width(64));
+            vec.push_back(type_ptr(arr(top_nat(), elem_type)));
+
+            for( size_t i = 0 ; i < dims ; i++ ){
+                vec.push_back(type_int_width(64));
+            }
+
+            return sigma(vec);
         }
 
         thorin::unreachable();

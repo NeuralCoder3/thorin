@@ -409,17 +409,17 @@ const Def* tn_result_size(MOp mop, DefArray args){
     return world.op(Wrap::mul, WMode::none, rows, cols);
 }
 
-const Pi* LowerMatrix::mop_pi(MOp mop, const Def* elem_type, bool has_result_ptr){
+const Pi* LowerMatrix::mop_pi(MOp mop, size_t dims, const Def* elem_type, bool has_result_ptr){
     auto builder = world().builder();
     builder.mem();
 
     if(is_scalar(mop) || mop == MOp::init){
         builder.add(elem_type);
     }else if(is_binary(mop)){
-        builder.type_matrix(2, elem_type);
+        builder.type_matrix(dims, elem_type);
     }
 
-    builder.type_matrix(2, elem_type);
+    builder.type_matrix(dims, elem_type);
 
     if(has_result_ptr && has_tn_result(mop)){
         World &w = elem_type->world();
@@ -436,7 +436,7 @@ const Pi* LowerMatrix::mop_pi(MOp mop, const Def* elem_type, bool has_result_ptr
     }else if(mop == MOp::max){
         result_builder.add(elem_type).add(world().type_int_width(64));
     }else if(mop != MOp::init){
-        result_builder.type_matrix(2, elem_type);
+        result_builder.type_matrix(dims, elem_type);
     }
 
     builder.add(result_builder.cn());
@@ -444,8 +444,8 @@ const Pi* LowerMatrix::mop_pi(MOp mop, const Def* elem_type, bool has_result_ptr
     return builder.cn();
 }
 
-Lam* LowerMatrix::mop_lam(MOp mop, const Def* elem_type, bool has_result_ptr, const std::string& name){
-    Lam* lam = world().nom_lam(mop_pi(mop, elem_type, has_result_ptr), world().dbg(""));
+Lam* LowerMatrix::mop_lam(MOp mop, size_t dims, const Def* elem_type, bool has_result_ptr, const std::string& name){
+    Lam* lam = world().nom_lam(mop_pi(mop, dims, elem_type, has_result_ptr), world().dbg(""));
     assign_name(lam, mop, name);
     return lam;
 }
@@ -488,7 +488,7 @@ const Def* assign_arguments(Lam* lam, MOp mop, const Def* mmode, InputHelper& he
     return result_mat;
 }
 
-const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, const Def* elem_type, const Def* mmode){
+const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, size_t dim_size, const Def* elem_type, const Def* mmode){
 
     auto signature = world().tuple({mop_axiom, elem_type, mmode});
 
@@ -500,7 +500,7 @@ const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, const Def* elem_
 
     MOp mop = MOp(mop_axiom->flags());
 
-    Lam* impl = mop_lam(mop, elem_type, true, "_impl");
+    Lam* impl = mop_lam(mop, dim_size, elem_type, true, "_impl");
     impl->set_filter(false);
 
     mop_variants[signature] = impl;
@@ -512,10 +512,6 @@ const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, const Def* elem_
         helper.raw_result = result_mat;
     }
 
-    auto dims = tn_result_dims(mop, impl->vars());
-    auto rows = dims[0];
-    auto cols = dims[1];
-
     LoopBuilder loopBuilder(world());
 
     if(mop == MOp::sum){
@@ -526,10 +522,18 @@ const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, const Def* elem_
     }
 
     if(mop != MOp::vec && mop != MOp::transpose){
-        loopBuilder.addLoop(world().op(Wrap::mul, WMode::none, rows, cols)); //1d loop
+        MatrixHelper tn{impl->var(2)};
+        loopBuilder.addLoop(tn.getSize()); //1d loop
     }else if(mop == MOp::vec){
+        auto dims = tn_result_dims(mop, impl->vars());
+        auto rows = dims[0];
+
         loopBuilder.addLoop(rows);
     }else{
+        auto dims = tn_result_dims(mop, impl->vars());
+        auto rows = dims[0];
+        auto cols = dims[1];
+
         loopBuilder.addLoop(rows); //2d loop
         loopBuilder.addLoop(cols);
     }
@@ -554,14 +558,14 @@ const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, const Def* elem_
     return impl;
 }
 
-const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, const Def* elem_type, const Def* mmode){
+const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, size_t dims, const Def* elem_type, const Def* mmode){
     World& w = world();
 
     MOp mop = MOp(mop_axiom->flags());
 
     bool filter = true;
 
-    Lam* entry = mop_lam(mop, elem_type, false, "_entry");
+    Lam* entry = mop_lam(mop, dims, elem_type, false, "_entry");
     auto entry_ret_var = entry->ret_var();
     entry->set_filter(true);
 
@@ -600,7 +604,7 @@ const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, const Def* elem
         }
     }
 
-    auto impl = create_MOp_impl(mop_axiom, elem_type, mmode);
+    auto impl = create_MOp_impl(mop_axiom, dims, elem_type, mmode);
 
     if(false && has_tn_result(mop)){ //reuse or alloc memory for result of operation
         auto arr_unknown_size_ty = w.arr(w.top_nat(), elem_type)->as<Arr>();
@@ -706,10 +710,10 @@ Lam* LowerMatrix::rewrite_mop(const App* app, const Def* arg_wrap){
     auto mop_axiom = mop_app->callee()->as<Axiom>();
 
     auto rmode = mop_app->arg(0);
-    auto dim_count = mop_app->arg(1);
+    auto dim_count = as_lit(mop_app->arg(1));
     auto elem_type = mop_app->arg(2);
 
-    auto mop_lam = create_MOp_entry(mop_axiom, elem_type, rmode);
+    auto mop_lam = create_MOp_entry(mop_axiom, dim_count, elem_type, rmode);
 
     auto res_buil = buil.mem();
     if(MOp(mop_axiom->flags()) == MOp::sum){
@@ -756,41 +760,52 @@ struct FormulaHelper{
     std::vector<const Def*> sizes;
 };
 
-FormulaHelper constructHelper(const Def* lhs, const Def* rhs, const Def* out, const Def* lhs_tn, const Def* rhs_tn){
-    std::unordered_map<size_t, size_t> count;
+FormulaHelper constructHelper(const Def* eq, const Def* lhs_tn, const Def* rhs_tn){
 
+    auto size = eq->num_ops();
+
+    std::unordered_map<size_t, size_t> count;
     FormulaHelper helper;
 
-    DefVec ops = {lhs, rhs, out};
+    helper.unary = size < 3;
+
     DefVec tns = {lhs_tn, rhs_tn};
 
     size_t list_index = 0;
-    for( auto *eq_part : ops ){
-        if(auto tuple = eq_part->isa<Tuple>()){
-            size_t dim_index = 0;
-            (&helper.lhs_dim)[list_index] = tuple->num_ops();
-            for( auto index_op : tuple->ops() ){
-                auto index = as_lit(index_op);
+    for( auto *eq_part : eq->ops() ){
 
-                (&helper.lhs_indices)[list_index].push_back(index);
-
-                if(count.contains(index)){
-                    count[index] = count[index] + dim_index;
-                }else{
-                    assert(list_index < 2);
-                    MatrixHelper matrix(tns[list_index]);
-                    helper.sizes.push_back(matrix.dim(dim_index));
-                    count[index] = dim_index;
-                }
-
-                dim_index++;
-            }
-
-        }else if(list_index == 1){
-            helper.unary = true;
+        Defs result;
+        if(eq_part->isa<Tuple>()){
+            result = eq_part->ops();
+        }else{
+            result = DefArray {eq_part};
         }
 
-        list_index++;
+        size_t dim_index = 0;
+        (&helper.lhs_dim)[list_index] = result.size();
+        for( auto index_op : result ){
+            auto index = as_lit(index_op) - 'a';
+
+            (&helper.lhs_indices)[list_index].push_back(index);
+
+            if(count.contains(index)){
+                count[index] = count[index] + dim_index;
+            }else{
+                assert(list_index < 2);
+                MatrixHelper matrix(tns[list_index]);
+                helper.sizes.push_back(matrix.dim(dim_index));
+                count[index] = dim_index;
+            }
+
+            dim_index++;
+        }
+
+
+        if(size == 2){
+            list_index = 2;
+        }else{
+            list_index++;
+        }
     }
 
     helper.order2index.reserve(count.size());
@@ -818,14 +833,13 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
 
     auto mem = arg_wrap->op(0);
 
-    auto lhs_eq = arg_wrap->op(1);
-    auto rhs_eq = arg_wrap->op(2);
-    auto out_eq = arg_wrap->op(3);
+    auto eq = arg_wrap->op(1);
 
-    auto lhs_tn = arg_wrap->op(4);
-    auto rhs_tn = arg_wrap->op(5);
 
-    FormulaHelper helper = constructHelper(lhs_eq, rhs_eq, out_eq, lhs_tn, rhs_tn);
+    auto lhs_tn = arg_wrap->op(2);
+    auto rhs_tn = arg_wrap->op(3);
+
+    FormulaHelper helper = constructHelper(eq, lhs_tn, rhs_tn);
 
     LoopBuilder loopBuilder(world());
     for( size_t order_index = 0; order_index < helper.order2index.size() ; order_index++ ){
