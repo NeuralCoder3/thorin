@@ -1260,45 +1260,55 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
 
         auto mem = formula->arg(0);
         auto eq = formula->arg(1);
-        auto lhs_eq = eq->op(0);
-        auto rhs_eq = eq->op(1);
-        auto res_eq = eq->op(2);
+        Equation equation;
+        parse_equation(eq, equation);
+
         auto lhs_tn = j_wrap(formula->arg(2));
-        auto rhs_tn = j_wrap(formula->arg(3));
+        assert(pullbacks_.contains(lhs_tn) && "Pullbacks for MOp arguments should already be created");
+        auto apb = pullbacks_[lhs_tn];
+
 
         auto res_type = formula->type()->proj(1);
 
         auto pbpi = createPbType(A,res_type);
-
-        assert(pullbacks_.contains(lhs_tn) && "Pullbacks for MOp arguments should already be created");
-        assert(pullbacks_.contains(rhs_tn) && "Pullbacks for MOp arguments should already be created");
-        // pullbacks of the arguments
-        auto apb = pullbacks_[lhs_tn];
-        auto bpb = pullbacks_[rhs_tn];
-
-        auto pbT = bpb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
         auto pb = world_.nom_filter_lam(pbpi,world_.lit_false(),  world_.dbg("phi_"));
 
-        // shortened pullback type => takes pullback result (A) And continues
-        // always expand operation pullbacks
-        auto middle = world_.nom_filter_lam(pbT,world_.lit_false(),  world_.dbg("phi_middle"));
-        auto end = world_.nom_filter_lam(pbT,world_.lit_false(),  world_.dbg("phi_end"));
+        const Def* rhs_tn = world_.top_nat();
+        if(equation.op == 0){
+            Equation left_diff({equation.output}, equation.inputs[0], equation.op);
+            auto diff_eq = world_.serialize_equation(left_diff);
+            auto [left_diff_mem, left_diff_mat] = world_.formula(pb->mem_var(), diff_eq, {pb->var(1) , world_.type_nat() } )->projs<2>();
+            pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, pb->ret_var()}));
+        }else{
+            rhs_tn = j_wrap(formula->arg(3));
+            assert(pullbacks_.contains(rhs_tn) && "Pullbacks for MOp arguments should already be created");
+            auto bpb = pullbacks_[rhs_tn];
+
+            Equation left_diff({equation.inputs[1], equation.output}, equation.inputs[0], equation.op);
+            auto left_eq = world_.serialize_equation(left_diff);
+
+            Equation right_diff({equation.inputs[0], equation.output}, equation.inputs[1], equation.op);
+            auto right_eq = world_.serialize_equation(right_diff);
+
+            auto pbT = bpb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
+            auto middle = world_.nom_filter_lam(pbT,world_.lit_false(),  world_.dbg("phi_middle"));
+            auto end = world_.nom_filter_lam(pbT,world_.lit_false(),  world_.dbg("phi_end"));
+
+            auto [left_diff_mem, left_diff_mat] = world_.formula(pb->mem_var(), left_eq, {rhs_tn, pb->var(1) } )->projs<2>();
+            pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
+
+            auto [right_diff_mem, right_diff_mat] = world_.formula(middle->mem_var(),right_eq , {lhs_tn, pb->var(1)})->projs<2>();
+            middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
+
+            auto adiff = world_.tuple(vars_without_mem_cont(middle));
+            auto bdiff = world_.tuple(vars_without_mem_cont(end));
+            auto sum_pb = vec_add(world_,adiff,bdiff,pb->ret_var());
+            end->set_body(world_.app(sum_pb, end->mem_var()));
+        }
+
 
         auto [dst_mem, dst_res] = world_.formula(current_mem, eq, {lhs_tn, rhs_tn})->projs<2>();
-
         current_mem = dst_mem;
-
-        auto [left_diff_mem, left_diff_mat] = world_.formula(pb->mem_var(), world_.tuple({rhs_eq, res_eq, lhs_eq}), {rhs_tn, pb->var(1) } )->projs<2>();
-        pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
-
-        auto [right_diff_mem, right_diff_mat] = world_.formula(middle->mem_var(),world_.tuple({lhs_eq, res_eq, rhs_eq}), {lhs_tn, pb->var(1)})->projs<2>();
-        middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
-
-        auto adiff = world_.tuple(vars_without_mem_cont(middle));
-        auto bdiff = world_.tuple(vars_without_mem_cont(end));
-        auto sum_pb = vec_add(world_,adiff,bdiff,pb->ret_var());
-        end->set_body(world_.app(sum_pb, end->mem_var()));
-
         auto result = world_.tuple({dst_mem, dst_res});
         pullbacks_[result] = pb;
         return result;

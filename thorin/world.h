@@ -22,10 +22,21 @@ class ErrorHandler;
 class RecStreamer;
 class Scope;
 
-struct Formula{
+struct Equation{
     std::vector<std::vector<u8>> inputs;
     std::vector<u8> output;
+    char op;
+
+    Equation() : op(0){}
+    Equation(std::vector<std::vector<u8>> inputs, std::vector<u8> output, char op = 0)
+        : inputs(std::move(inputs)),
+          output(std::move(output)),
+          op(op){ }
 };
+
+void parse_equation(const Def* equation, Equation& formula);
+void parse_equation(std::string equation, Equation& formula);
+void parse_equation(size_t size, std::function<u8(size_t)>, Equation& formula);
 
 /// The World represents the whole program and manages creation of Thorin nodes (Def%s).
 /// *Structural* Def%s are hashed into an internal HashSet.
@@ -203,7 +214,8 @@ public:
     const Def* mat(const Def* mat_type, Defs ops, const Def* dbg = {});
 
     const Def* formula(const Def* mem, const Def* formula, Defs ops, const Def* dbg = {});
-    void parse_formula(const Def* equation, Formula& formula);
+
+    const Def* serialize_equation(Equation& formula);
 
     const Sigma* sigma() { return data_.sigma_; } ///< The unit type within Type 0.
     ///@}

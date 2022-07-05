@@ -490,7 +490,7 @@ const Def* assign_arguments(Lam* lam, MOp mop, const Def* mmode, InputHelper& he
 
 const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, size_t dim_size, const Def* elem_type, const Def* mmode){
 
-    auto signature = world().tuple({mop_axiom, elem_type, mmode});
+    auto signature = world().tuple({mop_axiom, world().lit_int_width(64, dim_size), elem_type, mmode});
 
     if(mop_variants.contains(signature)){
         return mop_variants[signature];
@@ -747,6 +747,10 @@ void LowerMatrix::store_rec(const Def* value, const Def* mat, const Def* index, 
 
 struct FormulaHelper{
     bool unary = false;
+    bool scalar = false;
+    const Def* elem_type = nullptr;
+    const Def* result_type = nullptr;
+
     std::vector<size_t> lhs_indices;
     std::vector<size_t> rhs_indices;
     std::vector<size_t> res_indices;
@@ -767,32 +771,34 @@ FormulaHelper constructHelper(const Def* eq, const Def* lhs_tn, const Def* rhs_t
     std::unordered_map<size_t, size_t> count;
     FormulaHelper helper;
 
-    helper.unary = size < 3;
 
     DefVec tns = {lhs_tn, rhs_tn};
 
+    Equation formula;
+    thorin::parse_equation(eq, formula);
+
+    helper.unary = formula.op == 0;
+
     size_t list_index = 0;
-    for( auto *eq_part : eq->ops() ){
+    size_t dim_index = 0;
 
-        Defs result;
-        if(eq_part->isa<Tuple>()){
-            result = eq_part->ops();
-        }else{
-            result = DefArray {eq_part};
-        }
-
-        size_t dim_index = 0;
-        (&helper.lhs_dim)[list_index] = result.size();
-        for( auto index_op : result ){
-            auto index = as_lit(index_op) - 'a';
+    for( auto &eq_part : formula.inputs ){
+        dim_index = 0;
+        (&helper.lhs_dim)[list_index] = eq_part.size();
+        for( auto index_op : eq_part ){
+            auto index = index_op - 'a';
 
             (&helper.lhs_indices)[list_index].push_back(index);
 
             if(count.contains(index)){
                 count[index] = count[index] + dim_index;
             }else{
-                assert(list_index < 2);
                 MatrixHelper matrix(tns[list_index]);
+
+                if(helper.elem_type == nullptr){
+                    helper.elem_type = matrix.elem_type();
+                }
+
                 helper.sizes.push_back(matrix.dim(dim_index));
                 count[index] = dim_index;
             }
@@ -800,12 +806,20 @@ FormulaHelper constructHelper(const Def* eq, const Def* lhs_tn, const Def* rhs_t
             dim_index++;
         }
 
+        list_index++;
+    }
 
-        if(size == 2){
-            list_index = 2;
-        }else{
-            list_index++;
-        }
+
+    dim_index = 0;
+    helper.res_dim = formula.output.size();
+    helper.scalar = helper.res_dim == 0;
+    helper.result_type = helper.scalar ? helper.elem_type : eq->world().type_tn(helper.res_dim, helper.elem_type);
+    for( auto index_op : formula.output ){
+        auto index = index_op - 'a';
+        helper.res_indices.push_back(index);
+        assert(count.contains(index));
+        count[index] = count[index] + dim_index;
+        dim_index++;
     }
 
     helper.order2index.reserve(count.size());
@@ -848,6 +862,11 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
 
         loopBuilder.addLoop(loop_size);
     }
+
+    if( helper.scalar ){
+        loopBuilder.addVar(helper.elem_type, zero(world(), helper.elem_type));
+    }
+
     NestedLoops loops = loopBuilder.build();
 
     auto loop_size = loops.indices.size();
@@ -858,25 +877,40 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
         builder.add(rhs_tn->type());
     }
 
-    DefVec out_dims;
-    for( auto index : helper.res_indices ){
-        auto size = helper.sizes[index];
-        out_dims.push_back(size);
+    Lam *entry;
+    const Def* result;
+    const Def* after_entry_mem;
+    if(helper.scalar){
+        entry = builder
+                .add( buil.mem().add(helper.elem_type).cn() )
+                .filter(false)
+                .nom_filter_lam("tn_formula_entry");
+
+        result = loops.reductions[0];
+        after_entry_mem = entry->mem_var();
+    }else{
+        DefVec out_dims;
+        for( auto index : helper.res_indices ){
+            auto size = helper.sizes[index];
+            out_dims.push_back(size);
+        }
+        auto tn_type = world().type_tn(out_dims.size(), helper.elem_type);
+
+        entry = builder
+                .add( buil.mem().add(tn_type).cn() )
+                .filter(false)
+                .nom_filter_lam("tn_formula_entry");
+
+        auto [result_mem, result_mat] = world().op_create_matrix(helper.elem_type, out_dims, entry->mem_var(), true)->projs<2>();
+
+        after_entry_mem = result_mem;
+        result = result_mat;
     }
-    auto elem_type = world().elem_ty_of_tn(lhs_tn->type());
-    auto tn_type = world().type_tn(out_dims.size(), elem_type);
 
-    auto entry = builder
-            .add( buil.mem().add(tn_type).cn() )
-            .filter(false)
-            .nom_filter_lam("tn_formula_entry");
-
-    auto [result_mem, result_mat] = world().op_create_matrix(elem_type, out_dims, entry->mem_var(), true)->projs<2>();
-
-    buil.add(result_mem).app_body(entry, loops.entry);
+    buil.add(after_entry_mem).app_body(entry, loops.entry);
+    buil.mem(loops.finish).add(result).app_body(loops.finish, entry->ret_var());
 
     MatrixHelper lhs_help(lhs_tn);
-    MatrixHelper res_help(result_mat);
 
     World &w = world();
 
@@ -887,9 +921,21 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
     };
 
     auto left_ptr = lhs_help.getLea(helper.lhs_dim, mapper(helper.lhs_indices));
-    auto result_lea = res_help.getLea(helper.res_dim, mapper(helper.res_indices));
-    auto [result_load_mem, carry] = w.op_load(loops.body->mem_var(), result_lea)->projs<2>();
-    auto [left_load_mem, left_value] = w.op_load(result_load_mem, left_ptr)->projs<2>();
+
+    const Def* result_lea = nullptr;
+    const Def* carry;
+    const Def* before_left_load_mem = loops.body->mem_var();
+    if( helper.scalar ){
+        carry = loops.vars[0];
+    }else{
+        MatrixHelper res_help(result);
+        result_lea = res_help.getLea(helper.res_dim, mapper(helper.res_indices));
+        auto [result_load_mem, result_load_val] = w.op_load(before_left_load_mem, result_lea)->projs<2>();
+        carry = result_load_val;
+        before_left_load_mem = result_load_mem;
+    }
+
+    auto [left_load_mem, left_value] = w.op_load(before_left_load_mem, left_ptr)->projs<2>();
 
     const Def* before_store_mem;
     const Def* value;
@@ -900,21 +946,23 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
         MatrixHelper rhs_helper(rhs_tn);
         auto right_ptr = rhs_helper.getLea(helper.rhs_dim, mapper(helper.rhs_indices));
         auto [right_load_mem, right_value] = w.op_load(left_load_mem, right_ptr)->projs<2>();
-        value = mul_add(w, elem_type, left_value, right_value, carry);
+        value = mul_add(w, helper.elem_type, left_value, right_value, carry);
         before_store_mem = right_load_mem;
     }
 
-    auto store_mem = w.op_store(before_store_mem, result_lea, value);
-
-    buil.add(store_mem).app_body(loops.body, loops.body->ret_var());
-    buil.mem(loops.finish).add(result_mat).app_body(loops.finish, entry->ret_var());
+    if( helper.scalar ){
+        value = op(w, Op::add, helper.elem_type, value, carry);
+        buil.add(before_store_mem).add(value).app_body(loops.body, loops.body->ret_var());
+    }else{
+        auto store_mem = w.op_store(before_store_mem, result_lea, value);
+        buil.add(store_mem).app_body(loops.body, loops.body->ret_var());
+    }
 
     auto result_lam = buil.mem()
-            .add(tn_type)
+            .add(helper.result_type)
             .nom_filter_lam("tn_formula_result");
 
     auto entry_call_buil = buil.add(mem).add(lhs_tn);
-
 
     if(!helper.unary){
         entry_call_buil.add(rhs_tn);

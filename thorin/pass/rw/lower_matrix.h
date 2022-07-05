@@ -164,6 +164,10 @@ public:
         return result;
     }
 
+    const Def* elem_type(){
+        return world.elem_ty_of_tn(mat->type());
+    }
+
     const Def* getIndex(const DefArray& indices){
         return getIndex(indices.size(), [&](auto i){ return indices[i];});
     }

@@ -516,31 +516,52 @@ const Def* World::mat(const Def* mat_type, Defs ops, const Def* dbg) {
     return unify<Mat>(ops.size(), mat_type, ops, dbg);
 }
 
-inline Defs equation_elements(const Def* eq){
-    Defs result;
-    if(eq->isa<Tuple>()){
-        result = eq->ops();
-    }else{
-        result = DefArray {eq};
+const Def* World::serialize_equation(Equation& formula){
+    bool first = true;
+    DefVec eq_args;
+
+    auto elem_helper = [&](u8 val){
+        eq_args.push_back(lit_int<u8>(val));
+    };
+
+    auto list_helper = [&](std::vector<u8>& vec){
+        for ( u8 val : vec ){
+            elem_helper(val);
+        }
+    };
+
+    for( auto &output : formula.inputs ){
+        if(first){
+            first = false;
+        }else{
+            elem_helper(formula.op);
+        }
+        list_helper(output);
     }
 
-    return result;
+    elem_helper('=');
+    list_helper(formula.output);
+    return tuple(eq_args);
 }
 
-Formula parse_formula(const Def* equation, Formula& formula) {
+void parse_equation(size_t size, std::function<u8(size_t)> f, Equation& formula){
     formula.inputs.clear();
     formula.output.clear();
+    formula.op = 0;
 
-    size_t i = 0;
+    size_t slot_i = 0;
     bool is_out = false;
-    for (auto &eq: equation->ops()) {
-        auto cha = as_lit(eq);
+    for (size_t cha_i = 0 ; cha_i < size ; cha_i++) {
+        auto cha = f(cha_i);
 
         std::vector<u8> *list;
         if(is_out){
             list = &formula.output;
         }else{
-            list = &formula.inputs[i];
+            if(formula.inputs.size() <= slot_i){
+                formula.inputs.resize(slot_i + 1);
+            }
+            list = &formula.inputs[slot_i];
         }
 
         if(std::isalpha(cha)){
@@ -551,12 +572,19 @@ Formula parse_formula(const Def* equation, Formula& formula) {
             if( cha == '=' ){
                 is_out = true;
             }else{
-                i++;
+                slot_i++;
+                formula.op = cha;
             }
         }
     }
+}
 
-    return formula;
+void parse_equation(const Def* equation, Equation& formula) {
+    parse_equation(equation->num_ops(), [&](size_t i){ return as_lit(equation->op(i)); }, formula);
+}
+
+void parse_equation(std::string equation, Equation& formula) {
+    parse_equation(equation.size(), [&](size_t i){ return equation[i]; }, formula);
 }
 
 const Def* World::formula(const Def* mem, const Def* equation, Defs ops, const Def* dbg) {
@@ -566,50 +594,44 @@ const Def* World::formula(const Def* mem, const Def* equation, Defs ops, const D
     size_t current_id = 'a';
 
     DefVec normalized_equation;
+    for( auto &element : equation->ops() ){
+        auto lit = as_lit(element);
 
-    for( auto &eq : equation->ops() ){
-        DefVec newEq;
-
-        Defs elements;
-        if(eq->isa<Tuple>()){
-            elements = eq->ops();
-        }else{
-            elements = DefArray {eq};
-        }
-
-        for( auto &op : elements ){
-            op->dump();
-            auto lit = as_lit(op);
-
-            if( map.contains(lit) ){
-                newEq.push_back(lit_int<u8>(map[lit]));
-            }else{
-                auto new_index = current_id++;
-                map[lit] = new_index;
-                newEq.push_back(lit_int<u8>(new_index));
+        size_t cha;
+        if( std::isalpha(lit) ){
+            if( !map.contains(lit) ){
+                map[lit] = current_id++;
             }
+
+            cha = map[lit];
+
+        }else{
+            cha = lit;
         }
 
-        auto tup = tuple(newEq);
-        normalized_equation.push_back(tup);
-    }
-
-    auto out_op = equation_elements(normalized_equation[normalized_equation.size() - 1]);
-    auto size = out_op.size();
-
-    auto out_type = type_tn(lit_nat(size), el_ty);
-
-    const Def* second_op;
-    if(normalized_equation.size() == 3){
-        second_op = ops[1];
-    }else{
-        second_op = top_nat();
+        normalized_equation.push_back(lit_int<u8>(cha));
     }
 
     auto eq_tup = tuple(normalized_equation);
 
-    equation->dump();
-    eq_tup->dump();
+    Equation formula;
+    thorin::parse_equation(eq_tup, formula);
+
+    auto out_size = formula.output.size();
+
+    const Def* out_type;
+    if( out_size == 0 ){
+        out_type = el_ty;
+    }else{
+        out_type = type_tn(lit_nat(out_size), el_ty);
+    }
+
+    const Def* second_op;
+    if(formula.op == 0){
+        second_op = top_nat();
+    }else{
+        second_op = ops[1];
+    }
 
     return app(app(ax_formula(), {
             eq_tup->type(),
