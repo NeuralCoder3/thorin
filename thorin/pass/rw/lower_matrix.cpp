@@ -780,11 +780,19 @@ FormulaHelper constructHelper(const Def* eq, const Def* input){
     size_t in_index = 0;
     size_t dim_index = 0;
 
+    Defs inputs;
+
+    if(input->isa<Tuple>()){
+        inputs = input->ops();
+    }else{
+        inputs = {input};
+    }
+
     for( auto &eq_part : formula.inputs ){
         auto &vars = eq_part.vars;
         dim_index = 0;
 
-        auto current_input = input->op(in_index);
+        auto current_input = inputs[in_index];
 
         if(eq_part.variant == EquationInput::Tensor){
             auto dim = vars.size();
@@ -961,7 +969,7 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
 
     const Def* left_value;
     const Def* before_right_load_mem = before_left_load_mem;
-    if( helper.rhs_dim == 0){
+    if( helper.lhs_dim == 0){
         left_value = lhs_tn;
     }else{
         MatrixHelper lhs_help(lhs_tn);
@@ -980,12 +988,13 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
         MatrixHelper rhs_helper(rhs_tn);
         auto right_ptr = rhs_helper.getLea(helper.rhs_dim, mapper(helper.rhs_indices));
         auto [right_load_mem, right_value] = w.op_load(before_right_load_mem, right_ptr)->projs<2>();
-        value = mul_add(w, helper.elem_type, left_value, right_value, carry);
+        value = op(w, Op::mul, helper.elem_type, left_value, right_value);
         before_store_mem = right_load_mem;
     }
 
+    value = op(w, Op::add, helper.elem_type, value, carry);  //reduce dimension
+
     if( helper.scalar ){
-        value = op(w, Op::add, helper.elem_type, value, carry);
         buil.add(before_store_mem).add(value).app_body(loops.body, loops.body->ret_var());
     }else{
         auto store_mem = w.op_store(before_store_mem, result_lea, value);

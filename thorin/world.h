@@ -22,7 +22,7 @@ class ErrorHandler;
 class RecStreamer;
 class Scope;
 
-struct EquationInput{
+struct EquationInput {
     enum Variant{
         Tensor, Dimension
     };
@@ -32,15 +32,14 @@ struct EquationInput{
 };
 
 struct Equation{
-    std::vector<EquationInput> inputs;
-    std::vector<u8> output;
-    char op;
+    std::vector<EquationInput> inputs{};
+    std::vector<u8> output{};
+    size_t val_count = 0;
 
-    Equation() : op(0){}
-    Equation(std::vector<EquationInput> inputs, std::vector<u8> output, char op = 0)
+    Equation() {}
+    Equation(std::vector<EquationInput> inputs, std::vector<u8> output)
         : inputs(std::move(inputs)),
-          output(std::move(output)),
-          op(op){ }
+          output(std::move(output)){ }
 };
 
 void parse_equation(const Def* equation, Equation& formula);
@@ -223,6 +222,7 @@ public:
     const Def* mat(const Def* mat_type, Defs ops, const Def* dbg = {});
 
     const Def* formula(const Def* mem, const Def* formula, Defs ops, const Def* dbg = {});
+    void batched(const Def* mem, const Def* size, const Def* lam, const Def* ret, const Def* dbg);
 
     const Def* serialize_equation(Equation& formula);
 
@@ -452,6 +452,7 @@ public:
     const Axiom* ax_store()       const { return data_.store_;   }
     const Axiom* ax_map()         const { return data_.map_;     }
     const Axiom* ax_formula()     const { return data_.formula_; }
+    const Axiom* ax_batched()     const { return data_.batched_; }
     // clang-format on
     ///@}
 
@@ -1180,6 +1181,7 @@ private:
         const Axiom* store_;
         const Axiom* map_;
         const Axiom* formula_;
+        const Axiom* batched_;
         const Axiom* type_int_;
         const Axiom* type_mem_;
         const Axiom* type_ptr_;

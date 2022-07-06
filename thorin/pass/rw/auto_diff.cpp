@@ -1250,9 +1250,6 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
 
 
 
-
-
-
     if (auto formula = isa<Tag::Formula>(def)) {
 
         auto map_app = formula->callee()->as<App>();
@@ -1260,55 +1257,96 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
 
         auto mem = formula->arg(0);
         auto eq = formula->arg(1);
+        auto inputs = formula->arg(2);
         Equation equation;
         parse_equation(eq, equation);
 
-        auto lhs_tn = j_wrap(formula->arg(2));
+        DefVec input_elements;
+
+        if(inputs->isa<Tuple>()){
+            for( auto &input : inputs->ops() ){
+                input_elements.push_back(j_wrap(input));
+            }
+        }else{
+            input_elements.push_back(j_wrap(inputs));
+        }
+
+        auto lhs_tn = input_elements[0];
         assert(pullbacks_.contains(lhs_tn) && "Pullbacks for MOp arguments should already be created");
         auto apb = pullbacks_[lhs_tn];
 
 
         auto res_type = formula->type()->proj(1);
-
         auto pbpi = createPbType(A,res_type);
         auto pb = world_.nom_filter_lam(pbpi,world_.lit_false(),  world_.dbg("phi_"));
 
+        auto createEquation = [&](size_t switch_index, const Def* mem){
+            Equation result;
+            for( size_t i = 0 ; i < equation.inputs.size() ; i++ ){
+                if( i == switch_index){
+                    result.inputs.emplace_back(EquationInput{.variant = EquationInput::Tensor, .vars = equation.output});
+                }else if(equation.inputs[i].variant == EquationInput::Tensor){
+                    result.inputs.push_back(equation.inputs[i]);
+                }
+            }
+
+            std::unordered_set<u8> known_indices;
+            for( auto &input : result.inputs ){
+                for( auto id : input.vars ){
+                    known_indices.insert(id);
+                }
+            }
+
+            DefVec new_input_elements = input_elements;
+
+            auto old = new_input_elements[switch_index];
+
+            result.output = equation.inputs[switch_index].vars;
+
+            size_t i = 0;
+            for( auto &id : result.output ){
+                if( !known_indices.contains(id) ){
+                    result.inputs.emplace_back(EquationInput{.variant = EquationInput::Dimension, .vars = {id}});
+                    new_input_elements.push_back(world_.extract(old, (u64)2 + i));
+                }
+
+                i++;
+            }
+
+            auto new_eq = world_.serialize_equation(result);
+
+            new_input_elements[switch_index] = pb->var(1);
+            return world_.formula(mem, new_eq, new_input_elements );
+        };
+
         const Def* rhs_tn = world_.top_nat();
-        /*if(equation.op == 0){
-            Equation left_diff({equation.output}, equation.inputs[0], equation.op);
-            auto diff_eq = world_.serialize_equation(left_diff);
-            auto [left_diff_mem, left_diff_mat] = world_.formula(pb->mem_var(), diff_eq, {pb->var(1) , world_.type_nat() } )->projs<2>();
+        if(equation.val_count == 1){
+            auto [left_diff_mem, left_diff_mat] = createEquation(0, pb->mem_var())->projs<2>();
             pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, pb->ret_var()}));
         }else{
-            rhs_tn = j_wrap(formula->arg(3));
+            rhs_tn = input_elements[1];
             assert(pullbacks_.contains(rhs_tn) && "Pullbacks for MOp arguments should already be created");
             auto bpb = pullbacks_[rhs_tn];
-
-            Equation left_diff({equation.inputs[1], equation.output}, equation.inputs[0], equation.op);
-            auto left_eq = world_.serialize_equation(left_diff);
-
-            Equation right_diff({equation.inputs[0], equation.output}, equation.inputs[1], equation.op);
-            auto right_eq = world_.serialize_equation(right_diff);
 
             auto pbT = bpb->type()->as<Pi>()->doms().back()->as<Pi>(); // TODO: create using A
             auto middle = world_.nom_filter_lam(pbT,world_.lit_false(),  world_.dbg("phi_middle"));
             auto end = world_.nom_filter_lam(pbT,world_.lit_false(),  world_.dbg("phi_end"));
 
-            auto [left_diff_mem, left_diff_mat] = world_.formula(pb->mem_var(), left_eq, {rhs_tn, pb->var(1) } )->projs<2>();
+            auto [left_diff_mem, left_diff_mat] = createEquation(0, pb->mem_var())->projs<2>();
             pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
 
-            auto [right_diff_mem, right_diff_mat] = world_.formula(middle->mem_var(),right_eq , {lhs_tn, pb->var(1)})->projs<2>();
+            auto [right_diff_mem, right_diff_mat] = createEquation(1, middle->mem_var())->projs<2>();
             middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
 
             auto adiff = world_.tuple(vars_without_mem_cont(middle));
             auto bdiff = world_.tuple(vars_without_mem_cont(end));
             auto sum_pb = vec_add(world_,adiff,bdiff,pb->ret_var());
             end->set_body(world_.app(sum_pb, end->mem_var()));
-        }*/
+        }
 
-
-        auto [dst_mem, dst_res] = world_.formula(current_mem, eq, {lhs_tn, rhs_tn})->projs<2>();
+        auto [dst_mem, dst_res] = world_.formula(current_mem, eq, input_elements)->projs<2>();
         current_mem = dst_mem;
+
         auto result = world_.tuple({dst_mem, dst_res});
         pullbacks_[result] = pb;
         return result;

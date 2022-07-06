@@ -159,11 +159,20 @@ World::World(std::string_view name)
         }
     }
     {
-        // Map: [dims: nat, in: *, out: *] -> [mat[] w] -> m64 w
         auto ty     = nom_pi(type())->set_dom({type(), type(), type()});
         auto [dsc, input_ty, out_ty] = ty->vars<3>({dbg("dsc"), dbg("input_ty"), dbg("out_ty")});
         ty->set_codom(pi({mem, dsc, input_ty}, sigma({mem, out_ty})));
         data_.formula_ = axiom(nullptr, ty, Tag::Formula, 0, dbg("formula"));
+    }
+    {
+        auto ty = nom_pi(type())->set_dom(nat);
+        auto n  = ty->var(0, dbg("n"));
+        ty->set_codom(cn_mem_ret(type_int(n), sigma()));
+
+        auto ty     = nom_pi(type())->set_dom({type(), type(), type()});
+        auto [dsc, input_ty, out_ty] = ty->vars<3>({dbg("dsc"), dbg("input_ty"), dbg("out_ty")});
+        ty->set_codom(pi({mem, dsc, input_ty}, sigma({mem, out_ty})));
+        data_.batched_ = axiom(nullptr, ty, Tag::Batched, 0, dbg("Batched"));
     }
     {
         // Formula: [dims: nat, in: *, out: *] -> [mat[] w] -> m64 w
@@ -534,7 +543,7 @@ const Def* World::serialize_equation(Equation& formula){
         if(first){
             first = false;
         }else{
-            elem_helper(formula.op);
+            elem_helper(',');
         }
 
         if( input.variant == EquationInput::Dimension ){
@@ -554,7 +563,6 @@ const Def* World::serialize_equation(Equation& formula){
 void parse_equation(size_t size, std::function<u8(size_t)> f, Equation& formula){
     formula.inputs.clear();
     formula.output.clear();
-    formula.op = 0;
 
     size_t slot_i = 0;
     bool is_out = false;
@@ -597,8 +605,8 @@ void parse_equation(size_t size, std::function<u8(size_t)> f, Equation& formula)
                 is_out = true;
             }else{
                 slot_i++;
-                formula.op = cha;
             }
+            formula.val_count++;
             start_element = true;
         }
 
@@ -671,19 +679,16 @@ const Def* World::formula(const Def* mem, const Def* equation, Defs ops, const D
         out_type = type_tn(lit_nat(out_size), el_ty);
     }
 
-    const Def* second_op;
-    if(formula.op == 0){
-        second_op = top_nat();
-    }else{
-        second_op = ops[1];
-    }
-
     auto input_tup = tuple(ops);
 
     return app(app(ax_formula(), {
             eq_tup->type(),
             input_tup->type(),
             out_type}), {mem, eq_tup, input_tup}, dbg);
+}
+
+void World::batched(const Def* mem, const Def* size, const Def* lam, const Def* ret, const Def* dbg) {
+    app(ax_batched(), {mem, size, lam, ret}, dbg);
 }
 
 static const Def* infer_sigma(World& world, Defs ops) {
