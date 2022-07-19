@@ -5,7 +5,12 @@
 
 namespace thorin {
 
-
+#define CODE(T, o) o,
+enum class MOpStub : flags_t {
+    THORIN_M_OP (CODE)
+    maxLast, map, formula
+};
+#undef CODE
 
 class NestedLoops{
 public:
@@ -18,20 +23,7 @@ public:
     Lam* body;
 };
 
-static const Def* reduce(World& w, Defs ops){
-    const Def* size = nullptr;
-    for( size_t i = 0 ; i < ops.size() ; i++ ){
-        auto dim_size = ops[i];
 
-        if( i == 0 ){
-            size = dim_size;
-        }else{
-            size = w.op(Wrap::mul, (nat_t)0, size, dim_size);
-        }
-    }
-
-    return size;
-}
 
 class LoopBuilder{
     World& world;
@@ -288,13 +280,14 @@ class ConstructHelper{
 public:
     InputHelper impl;
     MatrixHelper result;
+    MatrixHelper maxIndices;
 
     const Def* raw_result = nullptr;
     DefArray indices;
     DefArray vars;
     Lam* body = nullptr;
 
-    ConstructHelper(World& w) : impl(w), result(w){
+    ConstructHelper(World& w) : impl(w), result(w), maxIndices(w){
 
     }
 };
@@ -316,7 +309,7 @@ public:
     const Lam* create_MOp_entry(const Axiom* mop_axiom, size_t dims, const Def* elem_type, const Def* mmode);
     const Lam* create_MOp_impl(const Axiom* mop_axiom, size_t dims, const Def* elem_type, const Def* rmode);
     void construct_mat_loop(const Def* elem_type, const Def* a_rows, const Def* b_cols, const Def* alloc_rows, const Def* alloc_cols, bool flatten, ConstructHelper& constructResult);
-    void construct_mop( MOp mop, const Def* elem_type, ConstructHelper& constructResult);
+    void construct_mop( MOpStub mop, const Def* elem_type, ConstructHelper& constructResult);
     Lam* rewrite_mop(const App* app, const Def* arg_wrap);
     Lam* rewrite_map(const App* app, const Def* arg_wrap);
     Lam* rewrite_formula(const App* app, const Def* arg_wrap);
@@ -324,8 +317,8 @@ public:
     const Def* rewrite_app(const App* app);
     void store_rec(const Def* value, const Def* mat, const Def* index, const Def*& mem);
 
-    const Pi* mop_pi(MOp mop, size_t dims, const Def* elem_type, bool has_result_ptr);
-    Lam* mop_lam(MOp mop, size_t dims, const Def* elem_type, bool has_result_ptr, const std::string& name);
+    const Pi* mop_pi(MOpStub mop, size_t dims, const Def* elem_type);
+    Lam* mop_lam(MOpStub mop, size_t dims, const Def* elem_type, const std::string& name);
 
     ChainHelper chainHelper;
 

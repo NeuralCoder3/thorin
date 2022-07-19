@@ -102,6 +102,62 @@ World::World(std::string_view name)
         ty->set_codom(pi({real_w, real_w}, real_w));
         THORIN_R_OP(CODE)
     }
+    {
+        auto ty     = nom_pi(type())->set_dom({type(), type(), type()});
+        auto [dsc, input_ty, out_ty] = ty->vars<3>({dbg("dsc"), dbg("input_ty"), dbg("out_ty")});
+        ty->set_codom(pi({mem, dsc, input_ty}, sigma({mem, out_ty})));
+        data_.formula_ = axiom(nullptr, ty, Tag::Formula, 0, dbg("formula"));
+    }
+    {
+        auto ty = nom_pi(type())->set_dom(nat);
+        auto n  = ty->var(0, dbg("n"));
+        auto int_ty = type_int_width(64);
+        ty->set_codom(pi({mem, int_ty, cn({mem, int_ty, int_ty, cn(mem)})}, mem));
+        data_.batched_ = axiom(nullptr, ty, Tag::Batched, 0, dbg("Batched"));
+    }
+    {
+        // Formula: [dims: nat, in: *, out: *] -> [mat[] w] -> m64 w
+        auto ty     = nom_pi(type())->set_dom({type(), type(), type()});
+        auto [mat_type, out, f_ty] = ty->vars<3>({dbg("mat_type"), dbg("out_sigma"), dbg("f_pi")});
+        ty ->set_codom(pi({mem, mat_type, f_ty}, sigma({mem, out})));
+        data_.map_ = axiom(nullptr, ty, Tag::Map, 0, dbg("map"));
+    }
+    {
+        // Formula: [dims: nat, in: *, out: *] -> [mat[] w] -> m64 w
+        auto ty     = nom_pi(type())->set_dom({type(), nat, nat});
+        auto [elem_type, in_dim_count, out_dim_count] = ty->vars<3>({dbg("elem_type"), dbg("in_dim_count"), dbg("out_dim_count")});
+        auto in_tn_type = type_tn(in_dim_count, elem_type);
+        auto out_indices_type = type_tn(out_dim_count, type_int_width(32));
+        auto out_values_type = type_tn(out_dim_count, elem_type);
+
+        ty->set_codom(pi({mem, in_tn_type}, sigma({mem, out_values_type, out_indices_type})));
+        data_.max_last_ = axiom(nullptr, ty, Tag::MaxLast, 0, dbg("max_last"));
+    }
+    { // ICmp: w: nat -> [int w, int w] -> bool
+        auto ty    = nom_pi(type())->set_dom(nat);
+        auto int_w = type_int(ty->var(dbg("w")));
+        ty->set_codom(pi({int_w, int_w}, type_bool()));
+        THORIN_I_CMP(CODE)
+    }
+    { // RCmp: [m: nat, w: nat] -> [real w, real w] -> bool
+        auto ty     = nom_pi(type())->set_dom({nat, nat});
+        auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
+        auto real_w = type_real(w);
+        ty->set_codom(pi({real_w, real_w}, type_bool()));
+        THORIN_R_CMP(CODE)
+    }
+    { // trait: T: * -> nat
+        auto ty = pi(type(), nat);
+        THORIN_TRAIT(CODE)
+    }
+    { // acc: n: nat -> cn[M, cn[M, int w n, cn[M, []]]]
+        // TODO this is more a proof of concept
+        auto ty = nom_pi(type())->set_dom(nat);
+        auto n  = ty->var(0, dbg("n"));
+        ty->set_codom(cn_mem_ret(type_int(n), sigma()));
+        THORIN_ACC(CODE)
+    }
+
     { // MOp: [m: nat, w: nat] -> [m64 w, m64 w] -> m64 w
         {
             auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
@@ -148,7 +204,6 @@ World::World(std::string_view name)
             ty->set_codom(pi({mem, real_w}, sigma({mem, w, type_int_width(64)})));
 
             CODE(MOp, max)
-            CODE(MOp, maxLast)
         }
         {
             auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
@@ -158,50 +213,6 @@ World::World(std::string_view name)
 
             CODE(MOp, init)
         }
-    }
-    {
-        auto ty     = nom_pi(type())->set_dom({type(), type(), type()});
-        auto [dsc, input_ty, out_ty] = ty->vars<3>({dbg("dsc"), dbg("input_ty"), dbg("out_ty")});
-        ty->set_codom(pi({mem, dsc, input_ty}, sigma({mem, out_ty})));
-        data_.formula_ = axiom(nullptr, ty, Tag::Formula, 0, dbg("formula"));
-    }
-    {
-        auto ty = nom_pi(type())->set_dom(nat);
-        auto n  = ty->var(0, dbg("n"));
-        auto int_ty = type_int_width(64);
-        ty->set_codom(pi({mem, int_ty, cn({mem, int_ty, int_ty, cn(mem)})}, mem));
-        data_.batched_ = axiom(nullptr, ty, Tag::Batched, 0, dbg("Batched"));
-    }
-    {
-        // Formula: [dims: nat, in: *, out: *] -> [mat[] w] -> m64 w
-        auto ty     = nom_pi(type())->set_dom({type(), type(), type()});
-        auto [mat_type, out, f_ty] = ty->vars<3>({dbg("mat_type"), dbg("out_sigma"), dbg("f_pi")});
-        ty ->set_codom(pi({mem, mat_type, f_ty}, sigma({mem, out})));
-        data_.map_ = axiom(nullptr, ty, Tag::Map, 0, dbg("map"));
-    }
-    { // ICmp: w: nat -> [int w, int w] -> bool
-        auto ty    = nom_pi(type())->set_dom(nat);
-        auto int_w = type_int(ty->var(dbg("w")));
-        ty->set_codom(pi({int_w, int_w}, type_bool()));
-        THORIN_I_CMP(CODE)
-    }
-    { // RCmp: [m: nat, w: nat] -> [real w, real w] -> bool
-        auto ty     = nom_pi(type())->set_dom({nat, nat});
-        auto [m, w] = ty->vars<2>({dbg("m"), dbg("w")});
-        auto real_w = type_real(w);
-        ty->set_codom(pi({real_w, real_w}, type_bool()));
-        THORIN_R_CMP(CODE)
-    }
-    { // trait: T: * -> nat
-        auto ty = pi(type(), nat);
-        THORIN_TRAIT(CODE)
-    }
-    { // acc: n: nat -> cn[M, cn[M, int w n, cn[M, []]]]
-        // TODO this is more a proof of concept
-        auto ty = nom_pi(type())->set_dom(nat);
-        auto n  = ty->var(0, dbg("n"));
-        ty->set_codom(cn_mem_ret(type_int(n), sigma()));
-        THORIN_ACC(CODE)
     }
 #undef CODE
     { // Conv: [dw: nat, sw: nat] -> i/r sw -> i/r dw
@@ -1355,6 +1366,13 @@ const Def* World::op_map(const Def* mem, const Def* mat, const Def* fn, const De
 
     auto mapped_return = this->sigma(arr);
     return app(app(ax_map(), {mat->type(), mapped_return, fn->type()}), {mem, mat, fn}, dbg);
+}
+
+const Def* World::op_maxLast(const Def* mem, const Def* mat, const Def* dbg){
+    auto elem_type = elem_ty_of_tn(mat->type());
+    auto in_dims = dim_count_of_tn(mat->type());
+    auto out_dims = lit_nat(as_lit(in_dims) - 1);
+    return app(app(ax_maxLast(), {elem_type, in_dims, out_dims}), {mem, mat}, dbg);
 }
 
 const Def* World::op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, const Def* init_def){

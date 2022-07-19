@@ -34,7 +34,7 @@ using nat_t    = u64;
 #define THORIN_TAG(m)                                               \
     m(Mem, mem) m(Int, int) m(Real, real) m(Ptr, ptr)               \
     m(Bit, bit) m(Shr, shr) m(Wrap, wrap) m(Div, div) m(ROp, rop)   \
-    m(MOp, mop) m(Tn, mat) m(Map, map) m(Formula, formula)          \
+    m(MOp, mop) m(Tn, mat) m(Map, map) m(Formula, formula) m(MaxLast, maxLast)          \
     m(ICmp, icmp) m(RCmp, rcmp)                                     \
     m(Trait, trait) m(Conv, conv) m(PE, pe) m(Acc, acc)             \
     m(Bitcast, bitcast) m(LEA, lea)                                 \
@@ -87,7 +87,7 @@ namespace MMode {
 /// Floating point (real) operations that take @p RMode.
 #define THORIN_R_OP(m) m(ROp, add) m(ROp, sub) m(ROp, mul) m(ROp, div) m(ROp, rem)
 /// MATRIX floating point (real) operations that take @p RMode.
-#define THORIN_M_OP(m) m(MOp, vec) m(MOp, add) m(MOp, sub) m(MOp, div) m(MOp, mul) m(MOp, smul) m(MOp, sadd) m(MOp, ssub) m(MOp, sdiv) m(MOp, transpose) m(MOp, sum) m(MOp, max) m(MOp, maxLast) m(MOp, init) m(MOp, get) m(MOp, set)
+#define THORIN_M_OP(m) m(MOp, vec) m(MOp, add) m(MOp, sub) m(MOp, div) m(MOp, mul) m(MOp, smul) m(MOp, sadd) m(MOp, ssub) m(MOp, sdiv) m(MOp, transpose) m(MOp, sum) m(MOp, max) m(MOp, init) m(MOp, get) m(MOp, set)
 /// Type traits
 #define THORIN_TRAIT(m) m(Trait, size) m(Trait, align)
 /// Conversions
@@ -208,7 +208,7 @@ enum class Shr    : flags_t { THORIN_SHR  (CODE) };
 enum class Wrap   : flags_t { THORIN_WRAP (CODE) };
 enum class Div    : flags_t { THORIN_DIV  (CODE) };
 enum class ROp    : flags_t { THORIN_R_OP (CODE) };
-enum class MOp    : flags_t { THORIN_M_OP (CODE) };
+enum class MOp    : flags_t { THORIN_M_OP (CODE) Size };
 enum class ICmp   : flags_t { THORIN_I_CMP(CODE) };
 enum class RCmp   : flags_t { THORIN_R_CMP(CODE) };
 enum class Trait  : flags_t { THORIN_TRAIT(CODE) };

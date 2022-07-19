@@ -452,6 +452,7 @@ public:
     const Axiom* ax_slot()        const { return data_.slot_;    }
     const Axiom* ax_store()       const { return data_.store_;   }
     const Axiom* ax_map()         const { return data_.map_;     }
+    const Axiom* ax_maxLast()     const { return data_.max_last_;     }
     const Axiom* ax_formula()     const { return data_.formula_; }
     const Axiom* ax_batched()     const { return data_.batched_; }
     // clang-format on
@@ -604,6 +605,32 @@ public:
     const Def* op_alloc(const Def* type, const Def* mem, const Def* dbg = {}) {
         return app(app(ax_alloc(), {type, lit_nat_0()}), mem, dbg);
     }
+
+    const Def* reduce(Defs ops){
+        const Def* size = nullptr;
+        for( size_t i = 0 ; i < ops.size() ; i++ ){
+            auto dim_size = ops[i];
+
+            if( i == 0 ){
+                size = dim_size;
+            }else{
+                size = op(Wrap::mul, (nat_t)0, size, dim_size);
+            }
+        }
+
+        return size;
+    }
+    const Def* tn_alloc(const Def* mem, const Def* type, Defs dims, const Def* dbg = {}) {
+        auto elem_type = elem_ty_of_tn(type);
+        auto arr_unknown_size_ty = arr(top_nat(), elem_type)->as<Arr>();
+        auto ptr_unknown_size = type_ptr(arr_unknown_size_ty);
+        auto result_size = reduce(dims);
+        auto arr_size_nat = op_bitcast(type_nat(), result_size);
+        auto arr_sized_ty = arr(arr_size_nat, elem_type)->as<Arr>();
+        auto [alloc_mem, alloc_ptr] = op_alloc(arr_sized_ty, mem)->projs<2>();
+        alloc_ptr = op_bitcast(ptr_unknown_size, alloc_ptr);
+        return tuple({mem, mat(type, lit_int_width(64, 0), alloc_ptr, dims)});
+    }
     const Def* op_slot(const Def* type, const Def* mem, const Def* dbg = {}) {
         return app(app(ax_slot(), {type, lit_nat_0()}), {mem, lit_nat(curr_gid())}, dbg);
     }
@@ -637,6 +664,7 @@ public:
     const Def* params_without_return_continuation(const Pi* pi);
     const Def* op_rev_diff(const Def* fn, const Def* dbg = {});
     const Def* op_map(const Def* mem, const Def* mat, const Def* fn, const Def* dbg = {});
+    const Def* op_maxLast(const Def* mem, const Def* mat, const Def* dbg = {});
     const Def* op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, bool zero_init = false);
     const Def* op_create_matrix(const Def* elem_type, Defs dims, const Def* mem, const Def* init_def);
     const Def* op_create_zero_matrix(const Def* elem_type, Defs dims );
@@ -1185,6 +1213,7 @@ private:
         const Axiom* slot_;
         const Axiom* store_;
         const Axiom* map_;
+        const Axiom* max_last_;
         const Axiom* formula_;
         const Axiom* batched_;
         const Axiom* type_int_;
