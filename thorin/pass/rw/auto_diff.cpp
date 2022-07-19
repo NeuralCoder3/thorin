@@ -458,17 +458,20 @@ std::pair<const Def*,const Def*> lit_of_type(World& world, const Def* mem, const
 
     if( auto mat = isa<Tag::Tn>(type) ){
         auto elem_type = mat->arg(1);
-        auto rows = world.extract(like, (u64) 2);
-        auto cols = world.extract(like, (u64) 3);
+
+        DefVec dims;
+        for(nat_t i = 2 ; i < like->num_projs() ; i++){
+            dims.push_back(world.extract(like, (u64) i));
+        }
         if(lit == 0.0){
-            auto mat = world.op_create_zero_matrix(elem_type, {rows, cols});
+            auto mat = world.op_create_zero_matrix(elem_type, dims);
             return {mem, mat};
         }else if(lit == 1.0){
-            auto mat = world.op_create_one_matrix(elem_type, {rows, cols});
+            auto mat = world.op_create_one_matrix(elem_type, dims);
             return {mem, mat};
         }else{
             auto [elem_mem, body_lit] = lit_of_type(world,mem,elem_type,nullptr,lit,dummy);
-            auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, {rows, cols}, elem_mem, body_lit)->projs<2>();
+            auto [alloc_mem, new_mat] = world.op_create_matrix(elem_type, dims, elem_mem, body_lit)->projs<2>();
             return {alloc_mem, new_mat};
         }
     }
@@ -1258,7 +1261,7 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto mem = formula->arg(0);
         auto eq = formula->arg(1);
         auto inputs = formula->arg(2);
-        Equation equation;
+        Equation equation{};
         parse_equation(eq, equation);
 
         DefVec input_elements;
@@ -1280,14 +1283,33 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
         auto pbpi = createPbType(A,res_type);
         auto pb = world_.nom_filter_lam(pbpi,world_.lit_false(),  world_.dbg("phi_"));
 
-        auto createEquation = [&](size_t switch_index, const Def* mem){
+
+        auto createEquation = [&](size_t diff_index, const Def* mem){
             Equation result;
-            for( size_t i = 0 ; i < equation.inputs.size() ; i++ ){
-                if( i == switch_index){
-                    result.inputs.emplace_back(EquationInput{.variant = EquationInput::Tensor, .vars = equation.output});
-                }else if(equation.inputs[i].variant == EquationInput::Tensor){
-                    result.inputs.push_back(equation.inputs[i]);
+            DefVec new_ops;
+
+            if(equation.op == '*'){
+                for( size_t i = 0 ; i < equation.inputs.size() ; i++ ){
+                    if( i == diff_index){
+                        result.inputs.emplace_back(EquationInput{.variant = EquationInput::Tensor, .vars = equation.output});
+                    }else if(equation.inputs[i].variant == EquationInput::Tensor){
+                        result.inputs.push_back(equation.inputs[i]);
+                    }
                 }
+
+                new_ops = input_elements;
+                result.output = equation.inputs[diff_index].vars;
+
+                new_ops[diff_index] = pb->var(1);
+            }else{
+                result.output = equation.inputs[diff_index].vars;
+                EquationInput input;
+                input.vars = equation.output;
+                input.variant = EquationInput::Tensor;
+                result.op = equation.op;
+
+                result.inputs.push_back(input);
+                new_ops = {pb->var(1)};
             }
 
             std::unordered_set<u8> known_indices;
@@ -1297,26 +1319,18 @@ const Def* AutoDiffer::j_wrap_convert(const Def* def) {
                 }
             }
 
-            DefVec new_input_elements = input_elements;
-
-            auto old = new_input_elements[switch_index];
-
-            result.output = equation.inputs[switch_index].vars;
-
+            auto old = input_elements[diff_index];
             size_t i = 0;
             for( auto &id : result.output ){
                 if( !known_indices.contains(id) ){
                     result.inputs.emplace_back(EquationInput{.variant = EquationInput::Dimension, .vars = {id}});
-                    new_input_elements.push_back(world_.extract(old, (u64)2 + i));
+                    new_ops.push_back(world_.extract(old, (u64)2 + i));
                 }
 
                 i++;
             }
-
             auto new_eq = world_.serialize_equation(result);
-
-            new_input_elements[switch_index] = pb->var(1);
-            return world_.formula(mem, new_eq, new_input_elements );
+            return world_.formula(mem, new_eq, new_ops );
         };
 
         const Def* rhs_tn = world_.top_nat();
@@ -2214,13 +2228,23 @@ const Def* AutoDiffer::j_wrap_mop(MOp op, const Def* args) {
             case MOp::vec: {
                 pb->set_dbg(world_.dbg(pb->name() + "vec"));
 
-                auto [b_trans_mem, b_trans_tn] = world_.unary_op(MOp::transpose, MMode::none, pb->mem_var(), b)->projs<2>();
-                auto [left_diff_mem, left_diff_mat] = world_.op(MOp::vec, MMode::none, b_trans_mem, pb->var(1), b_trans_tn)->projs<2>();
-                pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
 
-                auto [a_trans_mem, a_trans_tn] = world_.unary_op(MOp::transpose, MMode::none, middle->mem_var(), a)->projs<2>();
-                auto [right_diff_mem, right_diff_mat] = world_.op(MOp::vec, MMode::none, a_trans_mem, a_trans_tn, pb->var(1))->projs<2>();
-                middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
+                if(true){
+                    auto [left_diff_mem, left_diff_mat] = world_.op(MOp::vec, MMode::rtrans, pb->mem_var(), pb->var(1), b)->projs<2>();
+                    pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
+
+                    auto [right_diff_mem, right_diff_mat] = world_.op(MOp::vec, MMode::ltrans, middle->mem_var(), a, pb->var(1))->projs<2>();
+                    middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
+                }else{
+                    auto [b_trans_mem, b_trans_tn] = world_.unary_op(MOp::transpose, MMode::none, pb->mem_var(), b)->projs<2>();
+                    auto [left_diff_mem, left_diff_mat] = world_.op(MOp::vec, MMode::none, b_trans_mem, pb->var(1), b_trans_tn)->projs<2>();
+                    pb->set_body(world_.app(apb, {left_diff_mem, left_diff_mat, middle}));
+
+                    auto [a_trans_mem, a_trans_tn] = world_.unary_op(MOp::transpose, MMode::none, middle->mem_var(), a)->projs<2>();
+                    auto [right_diff_mem, right_diff_mat] = world_.op(MOp::vec, MMode::none, a_trans_mem, a_trans_tn, pb->var(1))->projs<2>();
+                    middle->set_body(world_.app(bpb, {right_diff_mem, right_diff_mat, end}));
+                }
+
                 break;
             }
             case MOp::sadd: {

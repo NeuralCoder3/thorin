@@ -676,6 +676,12 @@ std::string CodeGen::emit_bb(BB& bb, const Def* def) {
         auto ptr_t = convert(as<Tag::Ptr>(def->proj(1)->type()));
         bb.assign(name + ".i8", "call i8* @malloc(i64 {})", size);
         return bb.assign(name, "bitcast i8* {} to {}", name + ".i8", ptr_t);
+    } else if (auto batched = isa<Tag::Batched>(def)) {
+        emit_unsafe(batched->arg(0));
+        auto count  = emit(batched->arg(1));
+        auto func  = emit(batched->arg(2));
+        bb.tail("call void batched({}, {})", count, func);
+        return {};
     } else if (auto mslot = isa<Tag::Mslot>(def)) {
         emit_unsafe(mslot->arg(0));
         // TODO array with size

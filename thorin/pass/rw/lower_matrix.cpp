@@ -255,52 +255,19 @@ void LowerMatrix::construct_mop(MOp mop, const Def* elem_type, ConstructHelper& 
     }
 }
 
-const Def* LowerMatrix::alloc_stencil(const Def* stencil, const Def* rows, const Def* cols,  const Def*& mem){
+const Def* LowerMatrix::alloc_stencil(const Def* stencil, MatrixHelper& helper,  const Def*& mem){
     if(auto tuple = stencil->isa<Sigma>()){
-        return world().tuple(tuple->ops().map([&](auto elem, auto){ return alloc_stencil(elem, rows, cols, mem); }));
+        return world().tuple(tuple->ops().map([&](auto elem, auto){ return alloc_stencil(elem, helper, mem); }));
     }else if(auto mat = isa<Tag::Tn>(stencil)){
         auto elem_type = world().elem_ty_of_tn(mat);
-        auto [new_mem, result_matrix] = world().op_create_matrix(elem_type, {rows, cols}, mem)->projs<2>();
+        auto dims = helper.dims();
+        auto size = dims.size();
+        auto [new_mem, result_matrix] = world().op_create_matrix(elem_type, helper.dims(), mem)->projs<2>();
         mem = new_mem;
         return result_matrix;
     }else{
         thorin::unreachable();
     }
-}
-
-void LowerMatrix::construct_mat_loop(const Def* stencil, const Def* rows, const Def* cols, const Def* alloc_rows, const Def* alloc_cols, bool flatten, ConstructHelper& helper){
-    auto impl = helper.impl.lam;
-
-    const Def* alloc_mem = impl->mem_var();
-    auto result_matrix = alloc_stencil(stencil, alloc_rows, alloc_cols, alloc_mem);
-
-    LoopBuilder loopBuilder(world());
-
-    if(flatten){
-        loopBuilder.addLoop(world().op(Wrap::mul, WMode::none, rows, cols));
-    }else{
-        loopBuilder.addLoop(rows);
-        loopBuilder.addLoop(cols);
-    }
-
-    NestedLoops result = loopBuilder.build();
-
-    buil
-        .add(alloc_mem)
-        .app_body(impl, result.entry);
-
-    buil
-        .mem(result.finish)
-        .add(result_matrix)
-        .app_body(result.finish, impl->ret_var());
-
-    if(isa<Tag::Tn>(result_matrix->type())){
-        helper.result.setMat(result_matrix);
-    }
-
-    helper.raw_result = result_matrix;
-    helper.indices = result.indices;
-    helper.body = result.body;
 }
 
 void assign_name(Lam* lam, MOp mop, const std::string& suffix = ""){
@@ -317,7 +284,8 @@ void assign_name(Lam* lam, MOp mop, const std::string& suffix = ""){
         case MOp::sdiv: dbg_name = "sdiv"; break;
 
         case MOp::sum: dbg_name = "sum"; break;
-        case MOp::max: dbg_name = "sum"; break;
+        case MOp::max: dbg_name = "max"; break;
+        case MOp::maxLast: dbg_name = "maxLast"; break;
         case MOp::init: dbg_name = "init"; break;
         case MOp::transpose: dbg_name = "transpose"; break;
 
@@ -373,7 +341,7 @@ bool has_tn_result(MOp mop){
     return mop != MOp::init && mop != MOp::sum && mop != MOp::max;
 }
 
-DefArray tn_result_dims(MOp mop, DefArray args){
+DefArray tn_result_dims(MOp mop, const Def* mmode, DefArray args){
     MatrixHelper left{args[1]};
 
     const Def* rows;
@@ -388,21 +356,35 @@ DefArray tn_result_dims(MOp mop, DefArray args){
         MatrixHelper right{args[2]};
 
         if(mop == MOp::vec){
-            rows = left.getRows();
+            auto lit_mode = as_lit(mmode);
+
+
+            if((lit_mode & MMode::ltrans) == MMode::ltrans){
+                rows = left.getCols();
+            }else{
+                rows = left.getRows();
+            }
+
+
+            if((lit_mode & MMode::rtrans) == MMode::rtrans){
+                cols = right.getRows();
+            }else{
+                cols = right.getCols();
+            }
+
         }else{
             rows = right.getRows();
+            cols = right.getCols();
         }
-
-        cols = right.getCols();
     }
 
     return {rows, cols};
 }
 
-const Def* tn_result_size(MOp mop, DefArray args){
+const Def* tn_result_size(MOp mop, const Def* mmode, DefArray args){
     World &world = args[0]->world();
 
-    auto dims = tn_result_dims(mop, args);
+    auto dims = tn_result_dims(mop, mmode, args);
     auto rows = dims[0];
     auto cols = dims[1];
 
@@ -435,6 +417,8 @@ const Pi* LowerMatrix::mop_pi(MOp mop, size_t dims, const Def* elem_type, bool h
         result_builder.add(elem_type);
     }else if(mop == MOp::max){
         result_builder.add(elem_type).add(world().type_int_width(64));
+    }else if(mop == MOp::maxLast){
+        result_builder.type_matrix(dims, elem_type).type_matrix(dims, world().type_int_width(32));
     }else if(mop != MOp::init){
         result_builder.type_matrix(dims, elem_type);
     }
@@ -480,7 +464,7 @@ const Def* assign_arguments(Lam* lam, MOp mop, const Def* mmode, InputHelper& he
                 w.type_tn(2, w.type_real(64)),
                 w.lit_int_width(64, 0),
                 lam->var(lam->num_vars() - 2),
-                tn_result_dims(mop, lam->vars())
+                tn_result_dims(mop, mmode, lam->vars())
             );
     }
 
@@ -488,14 +472,22 @@ const Def* assign_arguments(Lam* lam, MOp mop, const Def* mmode, InputHelper& he
     return result_mat;
 }
 
-const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, size_t dim_size, const Def* elem_type, const Def* mmode){
+Lam* dgemm = nullptr;
+Lam* dgeadd = nullptr;
+Lam* dgesub = nullptr;
+Lam* dsum = nullptr;
+Lam* dscal = nullptr;
 
-    auto signature = world().tuple({mop_axiom, world().lit_int_width(64, dim_size), elem_type, mmode});
+
+const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, size_t dim_size, const Def* elem_type, const Def* mmode){
+    auto signature = world().tuple({world().lit_int_width(64, mop_axiom->flags()), world().lit_int_width(64, dim_size), elem_type, mmode});
 
     if(mop_variants.contains(signature)){
         return mop_variants[signature];
     }
 
+    std::cout << mop_axiom->hash() << "-" << world().lit_int_width(64, dim_size)->hash() << "-"  << elem_type->hash() << "-"  << mmode->hash() << std::endl;
+    signature->dump();
     ConstructHelper helper{world()};
 
     MOp mop = MOp(mop_axiom->flags());
@@ -521,16 +513,268 @@ const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, size_t dim_size,
         loopBuilder.addVar(world().type_int_width(64), world().lit_int_width(64, 0));
     }
 
-    if(mop != MOp::vec && mop != MOp::transpose){
-        MatrixHelper tn{impl->var(2)};
-        loopBuilder.addLoop(tn.getSize()); //1d loop
-    }else if(mop == MOp::vec){
-        auto dims = tn_result_dims(mop, impl->vars());
-        auto rows = dims[0];
+    bool native = true;
 
-        loopBuilder.addLoop(rows);
+    if(mop == MOp::maxLast){
+        MatrixHelper tn{impl->var(1)};
+        auto dims = tn.dims();
+        auto first_size = reduce(world(), dims.skip_back());
+        auto second_size = dims[dims.size() - 1];
+        loopBuilder.addLoop(first_size);
+        loopBuilder.addLoop(second_size);
+    }else if(mop != MOp::vec && mop != MOp::transpose){
+        if(!native) {//1d loop
+            if (mop == MOp::add) {
+                MatrixHelper lhs{impl->var(1)};
+                MatrixHelper rhs{impl->var(2)};
+                MatrixHelper res{result_mat};
+
+                auto a_rows = lhs.dim(0);
+                auto a_cols = lhs.dim(1);
+
+                auto lhs_ptr = lhs.getPointer();
+                auto rhs_ptr = rhs.getPointer();
+                auto res_ptr = res.getPointer();
+
+                auto arr_ptr = world().type_ptr(
+                        world().arr(world().top_nat(), world().type_real(64))
+                );
+
+                if (dgeadd == nullptr) {
+                    dgeadd = buil.mem()
+                            .type_int_width(64)
+                            .type_int_width(64)
+                            .add(arr_ptr)
+                            .add(arr_ptr)
+                            .add(arr_ptr)
+                            .add(buil.mem().cn())
+                            .nom_lam("dgeadd");
+
+                    dgeadd->set_cc(thorin::Lam::CC::C);
+                }
+
+                auto result_lam = buil.mem().nom_filter_lam("result_mop_add");
+
+                buil
+                        .mem(impl)
+                        .add(a_rows)
+                        .add(a_cols)
+                        .add(lhs_ptr)
+                        .add(rhs_ptr)
+                        .add(res_ptr)
+                        .add(result_lam)
+                        .app_body(impl, dgeadd);
+
+                buil.mem(result_lam)
+                        .add(result_mat)
+                        .app_body(result_lam, impl->ret_var());
+
+                return impl;
+
+            } else if (mop == MOp::sub) {
+                MatrixHelper lhs{impl->var(1)};
+                MatrixHelper rhs{impl->var(2)};
+                MatrixHelper res{result_mat};
+
+                auto a_rows = lhs.dim(0);
+                auto a_cols = lhs.dim(1);
+
+                auto lhs_ptr = lhs.getPointer();
+                auto rhs_ptr = rhs.getPointer();
+                auto res_ptr = res.getPointer();
+
+                auto arr_ptr = world().type_ptr(
+                        world().arr(world().top_nat(), world().type_real(64))
+                );
+
+                if (dgesub == nullptr) {
+                    dgesub = buil.mem()
+                            .type_int_width(64)
+                            .type_int_width(64)
+                            .add(arr_ptr)
+                            .add(arr_ptr)
+                            .add(arr_ptr)
+                            .add(buil.mem().cn())
+                            .nom_lam("dgesub");
+
+                    dgesub->set_cc(thorin::Lam::CC::C);
+                }
+
+                auto result_lam = buil.mem().nom_filter_lam("result_mop_sub");
+
+                buil
+                        .mem(impl)
+                        .add(a_rows)
+                        .add(a_cols)
+                        .add(lhs_ptr)
+                        .add(rhs_ptr)
+                        .add(res_ptr)
+                        .add(result_lam)
+                        .app_body(impl, dgesub);
+
+                buil.mem(result_lam)
+                        .add(result_mat)
+                        .app_body(result_lam, impl->ret_var());
+
+                return impl;
+
+            } else if (mop == MOp::smul) {
+                MatrixHelper rhs{impl->var(2)};
+                MatrixHelper res{result_mat};
+
+                auto a_rows = rhs.dim(0);
+                auto a_cols = rhs.dim(1);
+
+                auto rhs_ptr = rhs.getPointer();
+                auto res_ptr = res.getPointer();
+
+                auto arr_ptr = world().type_ptr(
+                        world().arr(world().top_nat(), world().type_real(64))
+                );
+
+                if (dscal == nullptr) {
+                    dscal = buil.mem()
+                            .type_int_width(64)
+                            .type_int_width(64)
+                            .type_real(64)
+                            .add(arr_ptr)
+                            .add(arr_ptr)
+                            .add(buil.mem().cn())
+                            .nom_lam("dscal");
+
+                    dscal->set_cc(thorin::Lam::CC::C);
+                }
+
+                auto result_lam = buil.mem().nom_filter_lam("result_mop_smul");
+
+                buil
+                        .mem(impl)
+                        .add(a_rows)
+                        .add(a_cols)
+                        .add(impl->var(1))
+                        .add(rhs_ptr)
+                        .add(res_ptr)
+                        .add(result_lam)
+                        .app_body(impl, dscal);
+
+                buil.mem(result_lam)
+                        .add(result_mat)
+                        .app_body(result_lam, impl->ret_var());
+
+                return impl;
+
+            } else if (mop == MOp::sum) {
+                MatrixHelper tn{impl->var(1)};
+
+                auto a_rows = tn.dim(0);
+                auto a_cols = tn.dim(1);
+
+                auto tn_ptr = tn.getPointer();
+
+                auto arr_ptr = world().type_ptr(
+                        world().arr(world().top_nat(), world().type_real(64))
+                );
+
+                if (dsum == nullptr) {
+                    dsum = buil.mem()
+                            .type_int_width(64)
+                            .type_int_width(64)
+                            .add(arr_ptr)
+                            .add(buil.mem().type_real(64).cn())
+                            .nom_lam("dsum");
+
+                    dsum->set_cc(thorin::Lam::CC::C);
+                }
+
+                auto result_lam = buil.mem().type_real(64).nom_filter_lam("result_mop_sum");
+
+                buil
+                        .mem(impl)
+                        .add(a_rows)
+                        .add(a_cols)
+                        .add(tn_ptr)
+                        .add(result_lam)
+                        .app_body(impl, dsum);
+
+                buil.mem(result_lam)
+                        .add(result_lam->var(1))
+                        .app_body(result_lam, impl->ret_var());
+
+                return impl;
+            }
+        }
+        MatrixHelper tn{impl->var(1 + ((mop == MOp::sum || mop == MOp::max) ? 0 : 1))};
+        loopBuilder.addLoop(tn.getSize());
+    }else if(mop == MOp::vec){
+        if(native){
+            auto dims = tn_result_dims(mop, mmode, impl->vars());
+            auto rows = dims[0];
+
+            loopBuilder.addLoop(rows);
+        }else{
+            auto lit_mode = as_lit(mmode);
+
+            MatrixHelper lhs{impl->var(1)};
+            MatrixHelper rhs{impl->var(2)};
+            MatrixHelper res{result_mat};
+
+            auto inv_lhs = (lit_mode & MMode::ltrans) == MMode::ltrans ? 1 : 0;
+            auto inv_rhs = (lit_mode & MMode::rtrans) == MMode::rtrans ? 1 : 0;
+
+            auto a_rows = lhs.dim(0 + inv_lhs);
+            auto b_cols = rhs.dim(1 - inv_rhs);
+            auto a_cols = lhs.dim(1 - inv_lhs);
+
+            auto lhs_ptr = lhs.getPointer();
+            auto rhs_ptr = rhs.getPointer();
+            auto res_ptr = res.getPointer();
+
+            lhs_ptr->dump();
+
+            auto arr_ptr = world().type_ptr(
+                world().arr(world().top_nat(), world().type_real(64))
+            );
+
+            if(dgemm == nullptr){
+                dgemm = buil.mem()
+                        .type_int_width(8)
+                        .type_int_width(64)
+                        .type_int_width(64)
+                        .type_int_width(64)
+                        .add(arr_ptr)
+                        .add(arr_ptr)
+                        .add(arr_ptr)
+                        .add(buil.mem().cn())
+                        .nom_lam("dgemm");
+            }
+
+            dgemm->set_cc(thorin::Lam::CC::C);
+
+
+            auto result_lam = buil.mem().nom_filter_lam("result_mop_vec");
+
+            auto mode_arg = world().lit_int_width(8, as_lit(mmode));
+
+            buil
+                    .mem(impl)
+                    .add(mode_arg)
+                    .add(a_rows)
+                    .add(b_cols)
+                    .add(a_cols)
+                    .add(lhs_ptr)
+                    .add(rhs_ptr)
+                    .add(res_ptr)
+                    .add(result_lam)
+                    .app_body(impl, dgemm);
+
+            buil.mem(result_lam)
+                    .add(result_mat)
+                    .app_body(result_lam, impl->ret_var());
+
+            return impl;
+        }
     }else{
-        auto dims = tn_result_dims(mop, impl->vars());
+        auto dims = tn_result_dims(mop, mmode, impl->vars());
         auto rows = dims[0];
         auto cols = dims[1];
 
@@ -548,7 +792,7 @@ const Lam* LowerMatrix::create_MOp_impl(const Axiom* mop_axiom, size_t dim_size,
     helper.vars = result.vars;
     helper.indices = result.indices;
     helper.body = result.body;
-
+    impl->type()->dump();
     buil.mem(result.finish)
         .add(result.reductions)
         .add_if_non_null(helper.raw_result)
@@ -563,7 +807,7 @@ const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, size_t dims, co
 
     MOp mop = MOp(mop_axiom->flags());
 
-    bool filter = true;
+    bool filter = false;
 
     Lam* entry = mop_lam(mop, dims, elem_type, false, "_entry");
     auto entry_ret_var = entry->ret_var();
@@ -610,7 +854,7 @@ const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, size_t dims, co
         auto arr_unknown_size_ty = w.arr(w.top_nat(), elem_type)->as<Arr>();
         auto ptr_unknown_size = w.type_ptr(arr_unknown_size_ty);
 
-        auto result_size = tn_result_size(mop, entry->vars());
+        auto result_size = tn_result_size(mop, mmode, entry->vars());
 
         auto default_size = world().lit_int_width(64, 0);
 
@@ -665,7 +909,7 @@ const Lam* LowerMatrix::create_MOp_entry(const Axiom* mop_axiom, size_t dims, co
         auto arr_unknown_size_ty = w.arr(w.top_nat(), elem_type)->as<Arr>();
         auto ptr_unknown_size = w.type_ptr(arr_unknown_size_ty);
 
-        auto result_size = tn_result_size(mop, entry->vars());
+        auto result_size = tn_result_size(mop, mmode, entry->vars());
 
 
         auto arr_size_nat = w.op_bitcast(w.type_nat(), result_size);
@@ -746,6 +990,7 @@ void LowerMatrix::store_rec(const Def* value, const Def* mat, const Def* index, 
 
 
 struct FormulaHelper{
+    char op = 0;
     bool unary = false;
     bool scalar = false;
     const Def* elem_type = nullptr;
@@ -770,7 +1015,7 @@ FormulaHelper constructHelper(const Def* eq, const Def* input){
 
     auto size = eq->num_ops();
 
-    std::unordered_map<size_t, size_t> count;
+    std::unordered_map<size_t, long> count;
     FormulaHelper helper;
 
     Equation formula;
@@ -778,9 +1023,11 @@ FormulaHelper constructHelper(const Def* eq, const Def* input){
 
     size_t val_index = 0;
     size_t in_index = 0;
-    size_t dim_index = 0;
+    long dim_index = 0;
 
-    Defs inputs;
+    Defs inputs;// = input->projs();
+
+    helper.op = formula.op;
 
     if(input->isa<Tuple>()){
         inputs = input->ops();
@@ -798,6 +1045,8 @@ FormulaHelper constructHelper(const Def* eq, const Def* input){
             auto dim = vars.size();
             (&helper.lhs_dim)[val_index] = dim;
 
+            assert(dim == (current_input->num_projs() - 2));
+
             if(dim > 0){
                 for( auto index_op : vars ){
                     auto index = index_op - 'a';
@@ -805,7 +1054,7 @@ FormulaHelper constructHelper(const Def* eq, const Def* input){
                     (&helper.lhs_indices)[val_index].push_back(index);
 
                     if(count.contains(index)){
-                        count[index] = count[index] + dim_index;
+                        count[index] = dim_index + std::max(0L, count[index]);
                     }else{
                         MatrixHelper matrix(current_input);
 
@@ -830,17 +1079,14 @@ FormulaHelper constructHelper(const Def* eq, const Def* input){
                 auto index = index_op - 'a';
 
                 if(!count.contains(index)){
-                    count[index] = 0;
+                    count[index] = -1;
                     helper.sizes.push_back(current_input);
                 }
-
-                dim_index++;
             }
         }
 
         in_index++;
     }
-
 
     dim_index = 0;
     helper.res_dim = formula.output.size();
@@ -850,14 +1096,16 @@ FormulaHelper constructHelper(const Def* eq, const Def* input){
         auto index = index_op - 'a';
         helper.res_indices.push_back(index);
         assert(count.contains(index));
-        count[index] = count[index] + dim_index;
+        count[index] = dim_index + std::max(0L, count[index]);
         dim_index++;
     }
 
     helper.order2index.reserve(count.size());
     helper.index2order.reserve(count.size());
     for(auto const& entries: count){
-        helper.order2index.push_back(entries.first);
+        if(entries.second >= 0){
+            helper.order2index.push_back(entries.first);
+        }
     }
 
     sort(helper.order2index.begin(), helper.order2index.end(), [&](size_t i1, size_t i2)
@@ -884,10 +1132,58 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
     auto input = arg_wrap->op(2);
 
 
+    auto dumper = [](const Def* tuple){
+        for( auto op : tuple->ops() ){
+            std::cout << (char)as_lit(op);
+        }
+
+        std::cout << std::endl;
+    };
+
+    dumper(eq);
+
+
     FormulaHelper helper = constructHelper(eq, input);
 
     auto lhs_tn = helper.val_input[0];
-    auto rhs_tn = helper.val_input[1];
+    auto rhs_tn = helper.val_input.size() <= 1 ? nullptr : helper.val_input[1];
+
+    /*
+     * auto batched_lam = buil.mem().type_int_width(64).type_int_width(64).add(buil.mem().cn()).nom_filter_lam("batched");
+
+    const Def* first_dim = nullptr;
+    LoopBuilder loopBuilder(world());
+    for( size_t order_index = 0; order_index < helper.order2index.size() ; order_index++ ){
+        auto loop_index = helper.order2index[order_index];
+        auto loop_size = helper.sizes[loop_index];
+
+        if(order_index == 0){
+            auto start = batched_lam->var(1);
+            auto end = batched_lam->var(2);
+
+            loopBuilder.addLoop(start, end);
+            first_dim = loop_size;
+        }else{
+            loopBuilder.addLoop(loop_size);
+        }
+    }
+
+      LoopBuilder loopBuilder(world());
+    for( size_t order_index = 0; order_index < helper.order2index.size() ; order_index++ ){
+        auto loop_index = helper.order2index[order_index];
+        auto loop_size = helper.sizes[loop_index];
+
+        if(order_index == 0){
+            auto start = batched_lam->var(1);
+            auto end = batched_lam->var(2);
+
+            loopBuilder.addLoop(start, end);
+            first_dim = loop_size;
+        }else{
+            loopBuilder.addLoop(loop_size);
+        }
+    }
+     * */
 
     LoopBuilder loopBuilder(world());
     for( size_t order_index = 0; order_index < helper.order2index.size() ; order_index++ ){
@@ -944,6 +1240,30 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
     buil.add(after_entry_mem).app_body(entry, loops.entry);
     buil.mem(loops.finish).add(result).app_body(loops.finish, entry->ret_var());
 
+    /*
+         buil.mem(batched_lam).app_body(batched_lam, loops.entry);
+    buil.mem(loops.finish).app_body(loops.finish, batched_lam->ret_var());
+
+    //buil.add(batched_mem).add(result).app_body(entry, entry->ret_var());
+
+    auto result_lam_test = buil.mem().nom_filter_lam("result_lam_test");
+
+    //auto batched_mem = world().batched(after_entry_mem, first_dim, batched_lam, {});
+
+    if(false){
+        //buil.add(batched_mem).app_body(entry, result_lam_test);
+        //buil.add(after_entry_mem).app_body(entry, result_lam_test);
+
+
+    }else{
+        buil.add(after_entry_mem)
+                .add(world().lit_int_width(64, 0))
+                .add(first_dim)
+                .add(result_lam_test)
+                .app_body(entry, batched_lam);
+    }
+
+     * */
 
     World &w = world();
 
@@ -979,17 +1299,36 @@ Lam* LowerMatrix::rewrite_formula(const App* app, const Def* arg_wrap){
         left_value = left_value_tmp;
     }
 
-    const Def* before_store_mem;
+    const Def* before_store_mem = before_right_load_mem;
     const Def* value;
     if(helper.unary){
-        before_store_mem = before_right_load_mem;
         value = left_value;
+
+        if(helper.op == '-'){
+            value = w.op(ROp::sub, RMode::none, world().lit_real(64, 0.0), value);
+        }
     }else{
-        MatrixHelper rhs_helper(rhs_tn);
-        auto right_ptr = rhs_helper.getLea(helper.rhs_dim, mapper(helper.rhs_indices));
-        auto [right_load_mem, right_value] = w.op_load(before_right_load_mem, right_ptr)->projs<2>();
-        value = op(w, Op::mul, helper.elem_type, left_value, right_value);
-        before_store_mem = right_load_mem;
+        const Def* right_value;
+
+        if( helper.rhs_dim == 0){
+            right_value = rhs_tn;
+        }else{
+            MatrixHelper rhs_helper(rhs_tn);
+            auto right_ptr = rhs_helper.getLea(helper.rhs_dim, mapper(helper.rhs_indices));
+            auto [right_load_mem, right_value_temp] = w.op_load(before_right_load_mem, right_ptr)->projs<2>();
+            right_value = right_value_temp;
+            before_store_mem = right_load_mem;
+        }
+
+        if(helper.op == '*'){
+            value = op(w, Op::mul, helper.elem_type, left_value, right_value);
+        }else if(helper.op == '+'){
+            value = op(w, Op::add, helper.elem_type, left_value, right_value);
+        }else if(helper.op == '-'){
+            value = op(w, Op::sub, helper.elem_type, left_value, right_value);
+        }else{
+            thorin::unreachable();
+        }
     }
 
     value = op(w, Op::add, helper.elem_type, value, carry);  //reduce dimension
@@ -1035,32 +1374,38 @@ Lam* LowerMatrix::rewrite_map(const App* app, const Def* arg_wrap){
         auto elem_type = world().elem_ty_of_tn(mat->type());
 
         entry = buil.mem()
-                .type_matrix(2, elem_type)
+                .add(mat->type())
                 .add(
                         buil.mem().add(out_type).cn()
                 )
                 .filter(false)
                 .nom_filter_lam("matrix_unary_entry");
 
-        ConstructHelper helper{world()};
+        MatrixHelper input{entry->var(1)};
 
-        auto& impl = helper.impl;
 
-        impl.left.setMat(entry->var(1));
+        const Def* alloc_mem =  entry->mem_var();
+        auto result_matrix = alloc_stencil(out_type, input, alloc_mem);
 
-        auto rows = impl.left.getRows();
-        auto cols = impl.left.getCols();
-        impl.lam = entry;
+        LoopBuilder loopBuilder(world());
+        loopBuilder.addLoop(input.getSize());
 
-        construct_mat_loop(out_type, rows, cols, rows, cols, false, helper);
+        NestedLoops result = loopBuilder.build();
 
+        buil
+                .add(alloc_mem)
+                .app_body(entry, result.entry);
+
+        buil
+                .mem(result.finish)
+                .add(result_matrix)
+                .app_body(result.finish, entry->ret_var());
+
+        auto body = result.body;
         World &w = world();
 
-        auto body = helper.body;
-        auto result_matrix = helper.raw_result;
-
-        auto src_index = impl.left.getIndex(helper.indices);
-        auto [right_load_mem, right_value] = impl.left.load(body->mem_var(), src_index)->projs<2>();
+        auto src_index = input.getIndex(result.indices);
+        auto [right_load_mem, right_value] = input.load(body->mem_var(), src_index)->projs<2>();
 
         auto f_type = map_f->type()->as<Pi>();
         auto map_result_lam = world().nom_filter_lam(f_type->doms().back()->as<Pi>(), world().lit_false(), world().dbg(""));
@@ -1105,6 +1450,10 @@ const Def* LowerMatrix::rewrite_app(const App* app){
 }
 
 const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
+    if(isa<Tag::Mem>(current->type())){
+        current->dump();
+    }
+
     if(auto lam = current->isa_nom<Lam>(); isa_workable(lam)){
         ChainHelper oldHelper = chainHelper;
 
@@ -1113,6 +1462,7 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
             .tail = lam,
         };
 
+        old2new[lam] = lam;
         auto result = rewrite_rec(lam->body());
 
         chainHelper.tail->set_body(result);
@@ -1141,11 +1491,14 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         auto args_rewritten = rewrite_rec(arg);
         auto arg_proj = args_rewritten->projs();
         auto callee = app->callee();
-        if(auto lam = callee->isa_nom<Lam>()){
-            return world().app(rewrite_rec(lam), arg_proj);
-        }else{
-            return world().app(callee, arg_proj);
+        if(callee->isa_nom<Lam>()){
+            return world().app(rewrite_rec(callee), arg_proj);
+        }else if(auto extr = callee->isa<Extract>()){
+            auto rewritten_callee = rewrite_rec(callee);
+            return world().app(rewritten_callee, arg_proj);
         }
+
+        return world().app(callee, arg_proj);
     }else if(auto tuple = current->isa<Tuple>()){
         auto wrapped = tuple->projs().map([&](auto elem, auto) { return rewrite_rec(elem); });
         auto resultTuple = world().tuple(wrapped);
@@ -1154,11 +1507,7 @@ const Def* LowerMatrix::rewrite_rec_convert(const Def* current){
         auto jeidx= rewrite_rec(extract->index());
         auto jtup = rewrite_rec(extract->tuple());
 
-        if(jtup->num_projs() != extract->tuple()->num_projs()){
-            rewrite_rec(extract->tuple());
-        }
-
-        return world().extract_unsafe(jtup, jeidx,extract->dbg());
+        return world().extract_unsafe(jtup, jeidx, extract->dbg());
     }else if(auto lit = current->isa<Lit>()) {
         return lit;
     }else if(auto var = current->isa<Var>()){

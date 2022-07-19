@@ -70,6 +70,7 @@ void optimize(World& world) {
 
     PassMan::run<Matrix2Tuple>(world);
 
+
     PassMan::run<PartialEval>(world);
     world.ostream() << world;
 

@@ -35,6 +35,7 @@ struct Equation{
     std::vector<EquationInput> inputs{};
     std::vector<u8> output{};
     size_t val_count = 0;
+    char op = 0;
 
     Equation() {}
     Equation(std::vector<EquationInput> inputs, std::vector<u8> output)
@@ -222,7 +223,7 @@ public:
     const Def* mat(const Def* mat_type, Defs ops, const Def* dbg = {});
 
     const Def* formula(const Def* mem, const Def* formula, Defs ops, const Def* dbg = {});
-    void batched(const Def* mem, const Def* size, const Def* lam, const Def* ret, const Def* dbg);
+    const Def* batched(const Def* mem, const Def* size, const Def* lam, const Def* dbg);
 
     const Def* serialize_equation(Equation& formula);
 
@@ -839,8 +840,8 @@ public:
         return {this};
     }
 
-    const Lam* repeat(const Def* count, const Lam* yield, Defs extra = {} ){
-        count = op(Conv::u2u, type_int_width(64), count);
+    const Lam* repeat(const Def* start, const Def* end, const Lam* yield, Defs extra = {} ){
+        end = op(Conv::u2u, type_int_width(64), end);
 
         auto loop_entry = builder()
                 .mem()
@@ -857,11 +858,11 @@ public:
         auto loop = builder().mem().nom_filter_lam("loop");
         auto loop_end = builder().mem().nom_filter_lam("loop_exit");
         auto loop_continue = builder().mem().add(extra).nom_filter_lam("loop_continue");
-        auto cond = op(ICmp::ul,loop_head->var(1),count);
+        auto cond = op(ICmp::ul,loop_head->var(1),end);
 
         builder()
             .mem(loop_entry)
-            .lit_int(64,0)
+            .add(start)
             .vars_without_mem_cont(loop_entry)
             .app_body(loop_entry, loop_head);
 
@@ -890,7 +891,7 @@ public:
         return loop_entry;
     }
 
-    std::pair<const Lam*, Lam*> repeat(const Def* count, Defs extra = {}){
+    std::pair<const Lam*, Lam*> repeat(const Def* start, const Def* end, Defs extra = {}){
         Lam* yield = builder()
                 .mem()
                 .type_int_width(64)
@@ -898,8 +899,12 @@ public:
                 .add(builder().mem().add(extra).cn())
                 .nom_filter_lam("yield");
 
-        const Lam* loop = repeat(count, yield, extra);
+        const Lam* loop = repeat(start,end, yield, extra);
         return {loop, yield};
+    }
+
+    std::pair<const Lam*, Lam*> repeat(const Def* count, Defs extra = {}){
+        return repeat(lit_int_width(64,0), count, extra);
     }
 
 

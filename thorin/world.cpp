@@ -148,6 +148,7 @@ World::World(std::string_view name)
             ty->set_codom(pi({mem, real_w}, sigma({mem, w, type_int_width(64)})));
 
             CODE(MOp, max)
+            CODE(MOp, maxLast)
         }
         {
             auto ty     = nom_pi(type())->set_dom({nat, nat, type()});
@@ -167,11 +168,8 @@ World::World(std::string_view name)
     {
         auto ty = nom_pi(type())->set_dom(nat);
         auto n  = ty->var(0, dbg("n"));
-        ty->set_codom(cn_mem_ret(type_int(n), sigma()));
-
-        auto ty     = nom_pi(type())->set_dom({type(), type(), type()});
-        auto [dsc, input_ty, out_ty] = ty->vars<3>({dbg("dsc"), dbg("input_ty"), dbg("out_ty")});
-        ty->set_codom(pi({mem, dsc, input_ty}, sigma({mem, out_ty})));
+        auto int_ty = type_int_width(64);
+        ty->set_codom(pi({mem, int_ty, cn({mem, int_ty, int_ty, cn(mem)})}, mem));
         data_.batched_ = axiom(nullptr, ty, Tag::Batched, 0, dbg("Batched"));
     }
     {
@@ -540,15 +538,25 @@ const Def* World::serialize_equation(Equation& formula){
     };
 
     for( auto &input : formula.inputs ){
-        if(first){
-            first = false;
-        }else{
-            elem_helper(',');
-        }
 
         if( input.variant == EquationInput::Dimension ){
+            if(first){
+                first = false;
+            }else{
+                elem_helper(',');
+            }
+
             list_helper(input.vars);
         }else{
+            if(first){
+                first = false;
+                if(formula.inputs.size() == 1 && formula.op != 0){
+                    elem_helper(formula.op);
+                }
+            }else{
+                elem_helper(formula.op);
+            }
+
             elem_helper('{');
             list_helper(input.vars);
             elem_helper('}');
@@ -563,13 +571,28 @@ const Def* World::serialize_equation(Equation& formula){
 void parse_equation(size_t size, std::function<u8(size_t)> f, Equation& formula){
     formula.inputs.clear();
     formula.output.clear();
+    formula.val_count = 0;
+    formula.op = 0;
 
     size_t slot_i = 0;
     bool is_out = false;
     bool start_element = true;
+    bool first_cha = true;
 
     for (size_t cha_i = 0 ; cha_i < size ; cha_i++) {
         auto cha = f(cha_i);
+
+        if(std::isspace(cha)){
+            continue;
+        }
+
+        if(first_cha){
+            first_cha = false;
+            if( cha == '-' || cha == '+' ){
+                formula.op = cha;
+                continue;
+            }
+        }
 
         std::vector<u8> *list;
         if(is_out){
@@ -588,6 +611,9 @@ void parse_equation(size_t size, std::function<u8(size_t)> f, Equation& formula)
                 cha_i++;
                 cha = f(cha_i);
                 variant = EquationInput::Tensor;
+                if(!is_out){
+                    formula.val_count++;
+                }
             }
 
             if(!is_out){
@@ -598,15 +624,18 @@ void parse_equation(size_t size, std::function<u8(size_t)> f, Equation& formula)
         start_element = false;
         if(std::isalpha(cha)){
             list->push_back(cha);
-        }else if(!std::isspace(cha) && cha != '}'){
+        }else if( cha != '}' ){
             assert(!is_out);
 
             if( cha == '=' ){
                 is_out = true;
             }else{
                 slot_i++;
+                if(cha != ','){
+                    assert(formula.op == 0);
+                    formula.op = cha;
+                }
             }
-            formula.val_count++;
             start_element = true;
         }
 
@@ -687,8 +716,8 @@ const Def* World::formula(const Def* mem, const Def* equation, Defs ops, const D
             out_type}), {mem, eq_tup, input_tup}, dbg);
 }
 
-void World::batched(const Def* mem, const Def* size, const Def* lam, const Def* ret, const Def* dbg) {
-    app(ax_batched(), {mem, size, lam, ret}, dbg);
+const Def* World::batched(const Def* mem, const Def* size, const Def* lam, const Def* dbg) {
+    return app(app(ax_batched(), lit_nat(0)), {mem, size, lam}, dbg);
 }
 
 static const Def* infer_sigma(World& world, Defs ops) {

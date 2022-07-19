@@ -18,9 +18,25 @@ public:
     Lam* body;
 };
 
+static const Def* reduce(World& w, Defs ops){
+    const Def* size = nullptr;
+    for( size_t i = 0 ; i < ops.size() ; i++ ){
+        auto dim_size = ops[i];
+
+        if( i == 0 ){
+            size = dim_size;
+        }else{
+            size = w.op(Wrap::mul, (nat_t)0, size, dim_size);
+        }
+    }
+
+    return size;
+}
+
 class LoopBuilder{
     World& world;
-    DefVec ranges;
+    DefVec starts;
+    std::vector<std::pair<const Def*, const Def*>> ranges;
     DefVec var_ty;
     DefVec var_init;
 
@@ -30,7 +46,11 @@ public:
     }
 
     void addLoop( const Def* count ){
-        ranges.push_back(count);
+        ranges.emplace_back(world.lit_int_width(64, 0), count);
+    }
+
+    void addLoop( const Def* start, const Def* end ){
+        ranges.emplace_back(start, end);
     }
 
     void addVar(const Def* ty, const Def* init){
@@ -55,8 +75,8 @@ public:
         bool body_is_yield = false;
 
         DefVec indices;
-        for(auto range : ranges){
-            auto [loop, yield] = world.repeat(range, var_ty);
+        for(auto [start, end] : ranges){
+            auto [loop, yield] = world.repeat(start, end, var_ty);
 
             b
                 .mem(body)
@@ -155,7 +175,7 @@ public:
     DefArray dims(){
         auto size = shape_size();
 
-        DefArray result{2};
+        DefArray result{size};
 
         for(size_t i = 0 ; i < size ; i++){
             result[i] = dim(i);
@@ -300,7 +320,7 @@ public:
     Lam* rewrite_mop(const App* app, const Def* arg_wrap);
     Lam* rewrite_map(const App* app, const Def* arg_wrap);
     Lam* rewrite_formula(const App* app, const Def* arg_wrap);
-    const Def* alloc_stencil(const Def* stencil, const Def* rows, const Def* cols,  const Def*& mem);
+    const Def* alloc_stencil(const Def* stencil, MatrixHelper& helper,  const Def*& mem);
     const Def* rewrite_app(const App* app);
     void store_rec(const Def* value, const Def* mat, const Def* index, const Def*& mem);
 

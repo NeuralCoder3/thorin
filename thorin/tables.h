@@ -73,8 +73,8 @@ namespace RMode {
 namespace MMode {
     enum RMode : nat_t {
         none     = 0,
-        //ltrans     = 1 << 0,
-        //rtrans     = 1 << 1,
+        ltrans     = 1 << 0,
+        rtrans     = 1 << 1,
     };
 }
 
@@ -87,7 +87,7 @@ namespace MMode {
 /// Floating point (real) operations that take @p RMode.
 #define THORIN_R_OP(m) m(ROp, add) m(ROp, sub) m(ROp, mul) m(ROp, div) m(ROp, rem)
 /// MATRIX floating point (real) operations that take @p RMode.
-#define THORIN_M_OP(m) m(MOp, vec) m(MOp, add) m(MOp, sub) m(MOp, div) m(MOp, mul) m(MOp, smul) m(MOp, sadd) m(MOp, ssub) m(MOp, sdiv) m(MOp, transpose) m(MOp, sum) m(MOp, max) m(MOp, init)
+#define THORIN_M_OP(m) m(MOp, vec) m(MOp, add) m(MOp, sub) m(MOp, div) m(MOp, mul) m(MOp, smul) m(MOp, sadd) m(MOp, ssub) m(MOp, sdiv) m(MOp, transpose) m(MOp, sum) m(MOp, max) m(MOp, maxLast) m(MOp, init) m(MOp, get) m(MOp, set)
 /// Type traits
 #define THORIN_TRAIT(m) m(Trait, size) m(Trait, align)
 /// Conversions

@@ -102,6 +102,7 @@ const Def* Matrix2Tuple::rewrite_convert(const Def* def) {
     }else if (auto app = def->isa<App>()){
         auto old_app_lam = app->callee();
 
+        old_app_lam->dump();
         if(old_app_lam->isa<Lam>()){
             auto new_lam = rewrite_cached(old_app_lam)->isa_nom<Lam>();
             DefVec new_args;
@@ -121,6 +122,8 @@ const Def* Matrix2Tuple::rewrite_convert(const Def* def) {
             auto src = bitcast->arg(0);
 
             return world().op_bitcast(rewrite_type_cached(dst_type), rewrite_cached(src));
+        }else if(auto batched = isa<Tag::Batched>(def)) {
+            return world().app(batched->callee(), batched->args().map([&](auto elem, auto){return rewrite_cached(elem);}));
         }else if(isa<Tag::Mem>(def->type())) {
             return def;
         }else{
